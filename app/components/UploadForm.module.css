@@ -1,0 +1,115 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hint {
+  font-size: 0.8125rem;
+  color: var(--ink-dim);
+}
+
+.input,
+.textarea,
+.fileInput {
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  color: var(--ink);
+}
+
+.input:focus-visible,
+.textarea:focus-visible {
+  border-color: var(--accent);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 6rem;
+}
+
+.fileList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--paper-raised);
+}
+
+.fileRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+}
+
+.fileRow[data-thumbnail='true'] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.fileOrder {
+  flex-shrink: 0;
+  min-width: 5.5rem;
+}
+
+.fileName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileSize {
+  flex-shrink: 0;
+  color: var(--ink-dim);
+}
+
+.errorMessage {
+  color: var(--danger);
+  background: var(--danger-paper);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  font-size: 0.875rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.submitButton {
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-6);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.submitButton:hover:not(:disabled) {
+  background: var(--paper-sunken);
+}
+
+.submitHint {
+  font-size: 0.8125rem;
+  color: var(--ink-dim);
+}

@@ -1,3 +1,65 @@
+/* D12: 발행 파이프라인 조작 콘솔 — 랜딩 페이지가 아니다. 밀도 높고 상태가 즉시
+   읽히는 화면. 색은 전부 OKLCH로만 선언하고 여기서 한 번만 정의한 뒤 var(--token)
+   으로만 참조한다. 순수 검정·흰색 금지 — 앵커 색조(hue 80, warm neutral)로 틴트한다.
+   강조색은 하나(hue 68, 채도 높은 앰버) — 발행 버튼 테두리·포커스링·활성 단계 표시에만
+   쓴다. 네이버 브랜드 녹색을 흉내내지 않는다. */
+:root {
+  --hue-anchor: 80;
+  --hue-accent: 68;
+  --hue-danger: 25;
+
+  --paper: oklch(97% 0.012 var(--hue-anchor));
+  --paper-raised: oklch(99% 0.008 var(--hue-anchor));
+  --paper-sunken: oklch(94% 0.014 var(--hue-anchor));
+  --ink: oklch(23% 0.02 var(--hue-anchor));
+  --ink-dim: oklch(46% 0.018 var(--hue-anchor));
+  --border: oklch(85% 0.016 var(--hue-anchor));
+  --border-strong: oklch(75% 0.02 var(--hue-anchor));
+
+  --accent: oklch(60% 0.16 var(--hue-accent));
+  --accent-ink: oklch(99% 0.01 var(--hue-accent));
+
+  --danger: oklch(52% 0.17 var(--hue-danger));
+  --danger-paper: oklch(95% 0.03 var(--hue-danger));
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius: 4px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --body-weight: 400;
+}
+
+/* 다크 모드: 고도(elevation)는 그림자가 아니라 밝기로 표현한다. 색상은 같은 hue를
+   유지하고, 라이트-온-다크 optical bolding을 상쇄하기 위해 본문 굵기를 낮춘다. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: oklch(14% 0.012 var(--hue-anchor));
+    --paper-raised: oklch(17% 0.012 var(--hue-anchor));
+    --paper-sunken: oklch(11% 0.01 var(--hue-anchor));
+    --ink: oklch(92% 0.012 var(--hue-anchor));
+    --ink-dim: oklch(65% 0.014 var(--hue-anchor));
+    --border: oklch(28% 0.014 var(--hue-anchor));
+    --border-strong: oklch(38% 0.016 var(--hue-anchor));
+
+    --accent: oklch(72% 0.17 var(--hue-accent));
+    --accent-ink: oklch(15% 0.01 var(--hue-accent));
+
+    --danger: oklch(65% 0.18 var(--hue-danger));
+    --danger-paper: oklch(22% 0.05 var(--hue-danger));
+
+    --body-weight: 350;
+  }
+}
+
 * {
   box-sizing: border-box;
   padding: 0;
@@ -7,4 +69,43 @@
 html,
 body {
   height: 100%;
+  overflow-x: clip;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-weight: var(--body-weight);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }

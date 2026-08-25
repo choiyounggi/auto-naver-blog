@@ -1,0 +1,70 @@
+.main {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-4) var(--space-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-4);
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.jobId {
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+}
+
+.warning {
+  font-size: 0.8125rem;
+  color: var(--danger);
+}
+
+.resultCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-6);
+}
+
+.resultTitle {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.resultLink {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.errorDetail {
+  font-size: 0.875rem;
+  color: var(--danger);
+}
+
+.resetButton {
+  align-self: flex-start;
+  background: var(--paper);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+}
+
+.resetButton:hover {
+  background: var(--paper-sunken);
+}

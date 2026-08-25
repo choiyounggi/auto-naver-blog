@@ -1,0 +1,42 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.status {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.warning {
+  font-size: 0.8125rem;
+  color: var(--danger);
+}
+
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-3);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.logRow {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 0.8125rem;
+}
+
+.logTime {
+  flex-shrink: 0;
+  color: var(--ink-dim);
+}
+
+.logMessage {
+  color: var(--ink);
+}
