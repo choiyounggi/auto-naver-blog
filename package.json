@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "naver:login": "node scripts/naver-login.mjs"
   },
   "dependencies": {
     "next": "16.3.2",
