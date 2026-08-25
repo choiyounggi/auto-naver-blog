@@ -1,0 +1,30 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "num_turns": 3,
+  "total_cost_usd": 0.37,
+  "permission_denials": [],
+  "session_id": "test-session-success",
+  "modelUsage": {
+    "claude-sonnet-5": { "inputTokens": 12345, "outputTokens": 678 }
+  },
+  "usage": {
+    "cache_creation_input_tokens": 51867
+  },
+  "structured_output": {
+    "title": "테스트 제목",
+    "intro": "테스트 인트로 문단입니다.",
+    "blocks": [
+      { "imageId": "img-1", "caption": "이미지 1 설명", "altText": "이미지 1 대체 텍스트" },
+      { "imageId": "img-2", "caption": "이미지 2 설명", "altText": "이미지 2 대체 텍스트" }
+    ],
+    "outro": "테스트 마무리 문단입니다.",
+    "tags": ["테스트", "일상"],
+    "topic": "일상",
+    "thumbnailImageId": "img-1",
+    "generatedAt": "2026-08-25T00:00:00.000Z",
+    "model": "claude-sonnet-5"
+  },
+  "result": "{\"title\":\"테스트 제목\"}"
+}

@@ -1,0 +1,128 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "total_cost_usd": 0.4,
+  "permission_denials": [],
+  "modelUsage": {
+    "claude-sonnet-5": {
+      "inputTokens": 20000,
+      "outputTokens": 900
+    }
+  },
+  "structured_output": {
+    "title": "20장 경계값 테스트",
+    "intro": "인트로",
+    "blocks": [
+      {
+        "imageId": "img-1",
+        "caption": "이미지 1 설명",
+        "altText": "이미지 1 대체 텍스트"
+      },
+      {
+        "imageId": "img-2",
+        "caption": "이미지 2 설명",
+        "altText": "이미지 2 대체 텍스트"
+      },
+      {
+        "imageId": "img-3",
+        "caption": "이미지 3 설명",
+        "altText": "이미지 3 대체 텍스트"
+      },
+      {
+        "imageId": "img-4",
+        "caption": "이미지 4 설명",
+        "altText": "이미지 4 대체 텍스트"
+      },
+      {
+        "imageId": "img-5",
+        "caption": "이미지 5 설명",
+        "altText": "이미지 5 대체 텍스트"
+      },
+      {
+        "imageId": "img-6",
+        "caption": "이미지 6 설명",
+        "altText": "이미지 6 대체 텍스트"
+      },
+      {
+        "imageId": "img-7",
+        "caption": "이미지 7 설명",
+        "altText": "이미지 7 대체 텍스트"
+      },
+      {
+        "imageId": "img-8",
+        "caption": "이미지 8 설명",
+        "altText": "이미지 8 대체 텍스트"
+      },
+      {
+        "imageId": "img-9",
+        "caption": "이미지 9 설명",
+        "altText": "이미지 9 대체 텍스트"
+      },
+      {
+        "imageId": "img-10",
+        "caption": "이미지 10 설명",
+        "altText": "이미지 10 대체 텍스트"
+      },
+      {
+        "imageId": "img-11",
+        "caption": "이미지 11 설명",
+        "altText": "이미지 11 대체 텍스트"
+      },
+      {
+        "imageId": "img-12",
+        "caption": "이미지 12 설명",
+        "altText": "이미지 12 대체 텍스트"
+      },
+      {
+        "imageId": "img-13",
+        "caption": "이미지 13 설명",
+        "altText": "이미지 13 대체 텍스트"
+      },
+      {
+        "imageId": "img-14",
+        "caption": "이미지 14 설명",
+        "altText": "이미지 14 대체 텍스트"
+      },
+      {
+        "imageId": "img-15",
+        "caption": "이미지 15 설명",
+        "altText": "이미지 15 대체 텍스트"
+      },
+      {
+        "imageId": "img-16",
+        "caption": "이미지 16 설명",
+        "altText": "이미지 16 대체 텍스트"
+      },
+      {
+        "imageId": "img-17",
+        "caption": "이미지 17 설명",
+        "altText": "이미지 17 대체 텍스트"
+      },
+      {
+        "imageId": "img-18",
+        "caption": "이미지 18 설명",
+        "altText": "이미지 18 대체 텍스트"
+      },
+      {
+        "imageId": "img-19",
+        "caption": "이미지 19 설명",
+        "altText": "이미지 19 대체 텍스트"
+      },
+      {
+        "imageId": "img-20",
+        "caption": "이미지 20 설명",
+        "altText": "이미지 20 대체 텍스트"
+      }
+    ],
+    "outro": "아웃트로",
+    "tags": [
+      "테스트"
+    ],
+    "topic": "일상",
+    "thumbnailImageId": "img-1",
+    "generatedAt": "2026-08-25T00:00:00.000Z",
+    "model": "claude-sonnet-5"
+  },
+  "result": "{\"title\":\"20장 경계값 테스트\"}"
+}

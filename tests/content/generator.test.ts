@@ -1,0 +1,138 @@
+import { chmodSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, test } from 'vitest';
+import type { AppConfig } from '@/lib/config';
+import { ContentGenerator } from '@/lib/content/generator';
+import type { PostInput, UploadedImage } from '@/lib/types';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const FAKE_CLAUDE_PATH = path.join(here, 'fake-claude.mjs');
+
+beforeAll(() => {
+  chmodSync(FAKE_CLAUDE_PATH, 0o755);
+});
+
+function fakeConfig(): AppConfig {
+  return {
+    dataDir: '/tmp/unused-in-this-test',
+    claudeBin: FAKE_CLAUDE_PATH,
+    asideBin: 'aside',
+    naverBlogId: null,
+    cookieFile: '/tmp/unused-in-this-test/cookies.json',
+    claudeTimeoutMs: 5000,
+    asideStepTimeoutMs: 60000,
+  };
+}
+
+function makeImage(n: number): UploadedImage {
+  return {
+    id: `img-${n}`,
+    originalName: `photo-${n}.jpg`,
+    path: `/uploads/photo-${n}.jpg`,
+    mimeType: 'image/jpeg',
+    bytes: 1024,
+    width: 800,
+    height: 600,
+    order: n - 1,
+  };
+}
+
+function makeInput(opts: { imageCount: number; fakeMode: string }): PostInput {
+  return {
+    jobId: 'job-1',
+    category: '카페',
+    highlights: `FAKE_MODE:${opts.fakeMode}`,
+    images: Array.from({ length: opts.imageCount }, (_, i) => makeImage(i + 1)),
+    createdAt: '2026-08-25T00:00:00.000Z',
+  };
+}
+
+describe('ContentGenerator.generate — 정상', () => {
+  test('이미지 2장: blocks가 1:1로 대응하고 실제 모델명이 기록된다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'success' });
+
+    const draft = await generator.generate(input);
+
+    expect(draft.blocks.length).toBe(2);
+    expect(draft.blocks[0].imageId).toBe(input.images[0].id);
+    expect(draft.blocks[1].imageId).toBe(input.images[1].id);
+    expect(draft.thumbnailImageId).toBe(input.images[0].id);
+    expect(draft.model).toBe('claude-sonnet-5');
+  });
+});
+
+describe('ContentGenerator.generate — 에러', () => {
+  test('blocks가 1개만 온 응답(2장 입력): throw, 메시지가 개수 불일치를 가리킨다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'generator-success-1' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/blocks.*images|개수/);
+  });
+
+  test('blocks[1].imageId가 뒤바뀐 응답: throw, 메시지가 순서/id 불일치를 가리킨다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'generator-blocks-id-swapped' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/blocks\[1\]\.imageId/);
+  });
+
+  test('thumbnailImageId가 두 번째 이미지 id인 응답: throw', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'generator-thumbnail-mismatch' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/thumbnailImageId/);
+  });
+
+  test('스키마에 안 맞는 응답(tags가 문자열): throw', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'generator-schema-invalid' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/PostDraft 스키마/);
+  });
+
+  test('callClaude가 ok:false(auth-failure): throw, 사유가 전달된다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'auth-failure' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/is_error/);
+  });
+});
+
+describe('ContentGenerator.generate — 경계값', () => {
+  test('이미지 1장: 정상 동작하고 blocks.length===1이다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 1, fakeMode: 'generator-success-1' });
+
+    const draft = await generator.generate(input);
+
+    expect(draft.blocks.length).toBe(1);
+    expect(draft.blocks[0].imageId).toBe(input.images[0].id);
+    expect(draft.thumbnailImageId).toBe(input.images[0].id);
+  });
+
+  test('이미지 20장: 정상 동작한다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 20, fakeMode: 'generator-success-20' });
+
+    const draft = await generator.generate(input);
+
+    expect(draft.blocks.length).toBe(20);
+    expect(draft.blocks[19].imageId).toBe(input.images[19].id);
+  });
+
+  test('이미지 21장: 즉시 throw하고 메시지에 장수가 담긴다 (claude CLI 호출 전)', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 21, fakeMode: 'generator-success-20' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/21/);
+  });
+
+  test('tags가 빈 배열인 응답: throw', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 2, fakeMode: 'generator-tags-empty' });
+
+    await expect(generator.generate(input)).rejects.toThrow(/tags/);
+  });
+});

@@ -1,0 +1,24 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "total_cost_usd": 0.36,
+  "permission_denials": [
+    { "tool": "Read", "reason": "path outside allowed directories" }
+  ],
+  "modelUsage": {
+    "claude-sonnet-5": { "inputTokens": 9500, "outputTokens": 120 }
+  },
+  "structured_output": {
+    "title": "부분 생성",
+    "intro": "인트로",
+    "blocks": [],
+    "outro": "아웃트로",
+    "tags": ["태그"],
+    "topic": "일상",
+    "thumbnailImageId": "img-1",
+    "generatedAt": "2026-08-25T00:00:00.000Z",
+    "model": "claude-sonnet-5"
+  },
+  "result": "{\"title\":\"부분 생성\"}"
+}

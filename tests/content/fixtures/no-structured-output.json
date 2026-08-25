@@ -1,0 +1,11 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "total_cost_usd": 0.35,
+  "permission_denials": [],
+  "modelUsage": {
+    "claude-sonnet-5": { "inputTokens": 9000, "outputTokens": 100 }
+  },
+  "result": "no structured output was produced for this call"
+}

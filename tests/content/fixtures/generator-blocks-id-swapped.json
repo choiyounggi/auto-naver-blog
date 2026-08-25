@@ -1,0 +1,25 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "total_cost_usd": 0.34,
+  "permission_denials": [],
+  "modelUsage": {
+    "claude-sonnet-5": { "inputTokens": 8000, "outputTokens": 300 }
+  },
+  "structured_output": {
+    "title": "순서 뒤바뀜 테스트",
+    "intro": "인트로",
+    "blocks": [
+      { "imageId": "img-1", "caption": "이미지 1 설명", "altText": "이미지 1 대체 텍스트" },
+      { "imageId": "img-3", "caption": "엉뚱한 이미지 설명", "altText": "엉뚱한 이미지 대체 텍스트" }
+    ],
+    "outro": "아웃트로",
+    "tags": ["테스트"],
+    "topic": "일상",
+    "thumbnailImageId": "img-1",
+    "generatedAt": "2026-08-25T00:00:00.000Z",
+    "model": "claude-sonnet-5"
+  },
+  "result": "{\"title\":\"순서 뒤바뀜 테스트\"}"
+}
