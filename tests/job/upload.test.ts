@@ -91,4 +91,10 @@ describe('resolveImagePathWithin', () => {
     const resolved = resolveImagePathWithin(base, 'ok', 'a.png');
     expect(resolved).toBe(path.join(base, 'jobs', 'ok', 'images', 'a.png'));
   });
+
+  // r2 리뷰 F2: r1 수정 후에도 jobId='..'는 dataDir 안이지만 <dataDir>/jobs/ 밖으로
+  // 샜다 — 접두사를 <dataDir>/jobs/로 좁힌 assertSafeJobDir로 이 잔여 틈을 닫는다.
+  test('에러: jobId가 ..이면 throw한다 (r1 이후 남았던 틈, F2)', () => {
+    expect(() => resolveImagePathWithin(base, '..', 'x')).toThrow();
+  });
 });

@@ -101,6 +101,18 @@ describe('JobStore.create / get', () => {
     await writeFile(path.join(jobDir, 'state.json'), JSON.stringify({ id: jobId }), 'utf8');
     await expect(store.get(jobId)).rejects.toThrow();
   });
+
+  // r2 리뷰 F2: id로 경로를 조립하는 곳이 upload.ts의 resolveImagePathWithin뿐
+  // 아니라 JobStore.jobDir에도 있었다 — GET /api/jobs/[id] 등은 이 id를 URL
+  // 경로값으로 받으므로 공격자가 통제할 수 있다. assertSafeJobDir로 dataDir 밖
+  // 파일을 읽으려 시도하기 전에 throw해야 한다.
+  test('에러: id가 ../../../../etc이면 dataDir 밖 파일을 읽지 않고 throw한다 (F2)', async () => {
+    await expect(store.get('../../../../etc')).rejects.toThrow();
+  });
+
+  test('에러: id가 ..이면 throw한다 (r1 이후 남았던 틈, F2)', async () => {
+    await expect(store.get('..')).rejects.toThrow();
+  });
 });
 
 describe('JobStore.transition', () => {

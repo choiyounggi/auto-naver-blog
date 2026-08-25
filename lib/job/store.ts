@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AppConfig } from '../config';
 import { JobStateSchema, type JobPhase, type JobState, type PostInput } from '../types';
+import { assertSafeJobDir } from './paths';
 
 // D13: 합법 전이만 허용한다. 선형 체인을 따라 한 칸씩만 전진할 수 있고,
 // failed/cancelled 로는 (터미널 상태가 아닌 한) 어디서든 갈 수 있다.
@@ -42,8 +43,10 @@ export class JobStore {
 
   constructor(private readonly config: AppConfig) {}
 
+  // r2 리뷰 F2: id로 경로를 조립하는 곳은 upload.ts의 resolveImagePathWithin과
+  // 여기 하나로 모은다 — 둘 다 assertSafeJobDir을 거친다.
   private jobDir(id: string): string {
-    return path.join(this.config.dataDir, 'jobs', id);
+    return assertSafeJobDir(this.config.dataDir, id);
   }
 
   private stateFile(id: string): string {
