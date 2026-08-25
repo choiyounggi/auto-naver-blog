@@ -123,6 +123,28 @@ function publishClickCount(repl: FakeAsideReplApi): number {
   return repl.calls.filter((call) => call.js.includes(PUBLISH_CLICK_MARKER)).length;
 }
 
+/**
+ * review r1 F1: successRepl 과 동일하되, 발행 버튼 클릭 evaluate 는 성공(ok:true)하지만
+ * 결과 URL 을 읽지 못한 상황을 흉내낸다 — submitPublish 의 resultUrl 이 null 이 된다.
+ */
+function successReplWithUnresolvedPublishUrl(editorReadyTree: string): FakeAsideReplApi {
+  return new FakeAsideReplApi((js): AsideEvalResult => {
+    if (js.includes(PUBLISH_CLICK_MARKER)) {
+      return okResult(JSON.stringify({ url: null }));
+    }
+    if (js.includes('se-popup-button-cancel') || js.includes('se-help-panel-close-button')) {
+      return okResult(JSON.stringify({ dismissed: false }));
+    }
+    if (js.includes('snapshot(page')) {
+      return okResult(JSON.stringify({ tree: editorReadyTree, url: 'https://blog.naver.com/tester?Redirect=Write' }));
+    }
+    if (js.includes('.count()')) {
+      return okResult(JSON.stringify({ count: 1 }));
+    }
+    return okResult(JSON.stringify({ ok: true }));
+  });
+}
+
 describe('NaverPublisher — 안전(D8: fillEditor 는 절대 발행하지 않는다)', () => {
   test('안전(핵심): fillEditor 성공 후 발행 클릭 횟수는 0이다', async () => {
     const tree = await loadEditorReadyTree();
@@ -227,5 +249,29 @@ describe('NaverPublisher — abort()', () => {
     await publisher.abort();
 
     expect(repl.calls.length).toBeGreaterThan(callCountBeforeAbort);
+  });
+});
+
+describe('NaverPublisher — review r1 F1: publishedAt 은 postUrl 과 같은 규칙을 따른다', () => {
+  test('에러: resultUrl 을 못 읽으면 ok===false 그리고 publishedAt===null 이다', async () => {
+    const repl = successReplWithUnresolvedPublishUrl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await publisher.fillEditor(makeDraft(1), makeInput(1));
+    const result = await publisher.publish();
+
+    expect(result.ok).toBe(false);
+    expect(result.publishedAt).toBeNull();
+  });
+
+  test('정상(양방향 고정): resultUrl 이 있으면 publishedAt 은 null 이 아니다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await publisher.fillEditor(makeDraft(1), makeInput(1));
+    const result = await publisher.publish();
+
+    expect(result.ok).toBe(true);
+    expect(result.publishedAt).not.toBeNull();
   });
 });

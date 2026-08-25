@@ -106,10 +106,13 @@ export class NaverPublisher implements NaverPublisherApi {
 
     // D2: 실제로 관측한 것만 주장한다 — evaluate 가 성공했다는 것과 URL을 읽었다는 것뿐,
     // 그 URL이 실제로 발행된 글이라는 것은 라이브에서 확인된 적이 없다.
+    // review r1 F1: publishedAt 도 postUrl 과 같은 규칙을 따른다 — resultUrl 을 못 읽었으면
+    // (ok:false) 발행이 확인되지 않은 것이므로 시각을 채우지 않는다. 안 그러면 발행되지
+    // 않은 기록에 "발행 시각"이 남아 사용자가 화면에서 잘못된 시각을 보게 된다.
     return PublishResultSchema.parse({
       ok: resultUrl !== null,
       postUrl: resultUrl,
-      publishedAt: new Date().toISOString(),
+      publishedAt: resultUrl !== null ? new Date().toISOString() : null,
       message:
         resultUrl !== null
           ? '발행 버튼을 클릭했고 URL을 읽었습니다. 실제 발행 성공 여부는 라이브에서 확인된 적이 없습니다.'
