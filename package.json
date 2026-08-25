@@ -11,7 +11,8 @@
     "start": "next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "naver:login": "node scripts/naver-login.mjs"
+    "naver:login": "node scripts/naver-login.mjs",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "next": "16.3.2",
