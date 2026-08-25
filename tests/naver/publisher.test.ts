@@ -73,6 +73,7 @@ function makeInput(imageCount: number, category = '여행'): PostInput {
     jobId: 'job-1',
     category,
     highlights: '하이라이트',
+    place: '',
     images: Array.from({ length: imageCount }, (_, i) => makeImage(i + 1)),
     createdAt: '2026-08-25T00:00:00.000Z',
   };

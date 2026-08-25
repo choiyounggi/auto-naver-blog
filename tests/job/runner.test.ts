@@ -33,6 +33,7 @@ function makeInput(jobId: string): PostInput {
     jobId,
     category: '일상',
     highlights: '오늘 다녀온 카페',
+    place: '',
     images: [
       {
         id: 'img-0',

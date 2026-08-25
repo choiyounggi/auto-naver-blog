@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, test } from 'vitest';
 import type { AppConfig } from '@/lib/config';
-import { ContentGenerator } from '@/lib/content/generator';
+import { buildPrompt, ContentGenerator } from '@/lib/content/generator';
 import type { PostInput, UploadedImage } from '@/lib/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +43,7 @@ function makeInput(opts: { imageCount: number; fakeMode: string }): PostInput {
     jobId: 'job-1',
     category: '카페',
     highlights: `FAKE_MODE:${opts.fakeMode}`,
+    place: '',
     images: Array.from({ length: opts.imageCount }, (_, i) => makeImage(i + 1)),
     createdAt: '2026-08-25T00:00:00.000Z',
   };
@@ -55,6 +56,7 @@ function makeInputWithOrders(orders: number[], fakeMode: string): PostInput {
     jobId: 'job-1',
     category: '카페',
     highlights: `FAKE_MODE:${fakeMode}`,
+    place: '',
     images: orders.map((order, i) => ({ ...makeImage(i + 1), order })),
     createdAt: '2026-08-25T00:00:00.000Z',
   };
@@ -160,5 +162,31 @@ describe('ContentGenerator.generate — 경계값', () => {
     const input = makeInput({ imageCount: 2, fakeMode: 'generator-tags-empty' });
 
     await expect(generator.generate(input)).rejects.toThrow(/tags/);
+  });
+});
+
+describe('buildPrompt — 장소 주입', () => {
+  test('정상: 입력한 장소가 프롬프트에 그대로 들어간다', async () => {
+    const prompt = await buildPrompt({ ...makeInput({ imageCount: 1, fakeMode: 'success' }), place: '서울 성수동 파스타집' });
+    expect(prompt).toContain('서울 성수동 파스타집');
+    expect(prompt).not.toContain('{{PLACE}}');
+  });
+
+  test('경계값: 장소가 비어 있으면 "(입력 없음)" 으로 치환된다', async () => {
+    const prompt = await buildPrompt({ ...makeInput({ imageCount: 1, fakeMode: 'success' }), place: '' });
+    expect(prompt).toContain('(입력 없음)');
+    expect(prompt).not.toContain('{{PLACE}}');
+  });
+
+  test('경계값: 공백뿐인 장소도 "(입력 없음)" 이다', async () => {
+    const prompt = await buildPrompt({ ...makeInput({ imageCount: 1, fakeMode: 'success' }), place: '   ' });
+    expect(prompt).toContain('(입력 없음)');
+  });
+
+  test('정상: 카테고리·강조 내용도 함께 치환된다 (치환 누락 회귀)', async () => {
+    const prompt = await buildPrompt({ ...makeInput({ imageCount: 1, fakeMode: 'success' }), category: '맛집 뿌시기', highlights: '면이 좋았다' });
+    expect(prompt).toContain('맛집 뿌시기');
+    expect(prompt).toContain('면이 좋았다');
+    expect(prompt).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 });

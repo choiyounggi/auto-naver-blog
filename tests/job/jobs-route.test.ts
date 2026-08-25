@@ -26,11 +26,14 @@ function makeTextFile(name: string): File {
 function makeUploadFormData(fields: {
   category?: string;
   highlights?: string;
+  /** 생략하면 place 필드를 아예 보내지 않는다 (선택 입력이라는 계약을 그대로 검사하기 위함) */
+  place?: string;
   images: File[];
 }): FormData {
   const fd = new FormData();
   fd.set('category', fields.category ?? '일상');
   fd.set('highlights', fields.highlights ?? '오늘 다녀온 카페');
+  if (fields.place !== undefined) fd.set('place', fields.place);
   for (const image of fields.images) {
     fd.append('images', image);
   }
@@ -107,6 +110,39 @@ describe('POST /api/jobs', () => {
     const request = new Request('http://127.0.0.1/api/jobs', { method: 'POST', body: fd });
     const response = await postJobs(request);
     expect(response.status).toBe(400);
+  });
+});
+
+describe('POST /api/jobs — 장소(선택 입력)', () => {
+  test('정상: place 를 보내면 잡 입력에 담긴다', async () => {
+    const fd = makeUploadFormData({ place: '서울 성수동 파스타집', images: [makePngFile('a.png')] });
+    const response = await postJobs(new Request('http://127.0.0.1/api/jobs', { method: 'POST', body: fd }));
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.input.place).toBe('서울 성수동 파스타집');
+  });
+
+  test('경계값: place 를 아예 안 보내도 성공하고 빈 문자열이 된다', async () => {
+    const fd = makeUploadFormData({ images: [makePngFile('a.png')] });
+    const response = await postJobs(new Request('http://127.0.0.1/api/jobs', { method: 'POST', body: fd }));
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.input.place).toBe('');
+  });
+
+  test('경계값: 앞뒤 공백은 다듬어 저장한다', async () => {
+    const fd = makeUploadFormData({ place: '  성수동  ', images: [makePngFile('a.png')] });
+    const response = await postJobs(new Request('http://127.0.0.1/api/jobs', { method: 'POST', body: fd }));
+    const body = await response.json();
+    expect(body.input.place).toBe('성수동');
+  });
+
+  test('에러: place 로 텍스트가 아닌 값(파일)이 오면 400 으로 거부한다', async () => {
+    const fd = makeUploadFormData({ images: [makePngFile('a.png')] });
+    fd.set('place', makePngFile('not-a-place.png'));
+    const response = await postJobs(new Request('http://127.0.0.1/api/jobs', { method: 'POST', body: fd }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('place');
   });
 });
 

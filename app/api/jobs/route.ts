@@ -33,6 +33,14 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'category and highlights are required text fields' }, { status: 400 });
   }
 
+  // place 는 선택 입력이다 — 아예 없으면 빈 문자열로 본다. 값이 왔는데 텍스트가 아니면
+  // (예: 파일이 실려 오면) 조용히 무시하지 않고 거부한다.
+  const placeRaw = formData.get('place');
+  if (placeRaw !== null && typeof placeRaw !== 'string') {
+    return NextResponse.json({ error: 'place must be a text field' }, { status: 400 });
+  }
+  const place = (placeRaw ?? '').trim();
+
   const files = formData.getAll('images').filter((entry): entry is File => entry instanceof File);
   if (files.length === 0) {
     return NextResponse.json({ error: 'at least one image is required' }, { status: 400 });
@@ -86,6 +94,7 @@ export async function POST(request: Request): Promise<Response> {
     jobId,
     category: categoryRaw,
     highlights: highlightsRaw,
+    place,
     images,
     createdAt: new Date().toISOString(),
   });

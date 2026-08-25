@@ -21,6 +21,7 @@ export function UploadForm({ onCreated, categories }: UploadFormProps) {
   // 카테고리가 하나뿐이면 고를 것도 없으므로 미리 선택해 둔다.
   const [category, setCategory] = useState(categories.length === 1 ? categories[0] : '');
   const [highlights, setHighlights] = useState('');
+  const [place, setPlace] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +45,7 @@ export function UploadForm({ onCreated, categories }: UploadFormProps) {
       const formData = new FormData();
       formData.set('category', category);
       formData.set('highlights', highlights);
+      formData.set('place', place);
       for (const file of files) {
         formData.append('images', file);
       }
@@ -116,6 +118,21 @@ export function UploadForm({ onCreated, categories }: UploadFormProps) {
           required
           disabled={submitting}
         />
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="place">
+          장소 (선택)
+        </label>
+        <input
+          id="place"
+          className={styles.input}
+          value={place}
+          onChange={(e) => setPlace(e.target.value)}
+          placeholder="예: 서울 성수동 ○○파스타"
+          disabled={submitting}
+        />
+        <p className={styles.hint}>적으면 글 마지막에 장소로 붙습니다. 비워 두면 넣지 않습니다.</p>
       </div>
 
       <div className={styles.field}>

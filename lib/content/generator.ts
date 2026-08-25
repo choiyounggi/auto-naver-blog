@@ -109,7 +109,8 @@ function assertInputOrderInvariant(input: PostInput): void {
   }
 }
 
-async function buildPrompt(input: PostInput): Promise<string> {
+// 템플릿 치환은 프롬프트 계약의 일부라 직접 테스트한다 — 그래서 export 한다.
+export async function buildPrompt(input: PostInput): Promise<string> {
   const template = await readFile(PROMPT_TEMPLATE_PATH, 'utf8');
   const imageList = input.images
     .map((image, index) => {
@@ -120,6 +121,7 @@ async function buildPrompt(input: PostInput): Promise<string> {
 
   return template
     .replaceAll('{{CATEGORY}}', input.category)
+    .replaceAll('{{PLACE}}', input.place.trim() === '' ? '(입력 없음)' : input.place.trim())
     .replaceAll('{{HIGHLIGHTS}}', input.highlights)
     .replaceAll('{{IMAGE_LIST}}', imageList)
     .replaceAll('{{IMAGE_COUNT}}', String(input.images.length));

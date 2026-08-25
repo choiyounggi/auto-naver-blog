@@ -34,6 +34,9 @@ export const PostInputSchema = z.object({
   jobId: z.string(),
   category: z.string(),
   highlights: z.string(),
+  // 글 끝에 붙일 장소. 선택 입력이라 빈 문자열이면 장소 문단 자체를 넣지 않는다.
+  // default 를 둬서 이 필드가 없던 시절에 저장된 잡 파일도 그대로 읽힌다.
+  place: z.string().default(''),
   images: z.array(UploadedImageSchema).min(1),
   createdAt: isoDateTime(),
 });

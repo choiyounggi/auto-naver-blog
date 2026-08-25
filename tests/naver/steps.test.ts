@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } from '@/lib/naver/errors';
 import {
+  buildPlaceText,
   dismissEntryPopups,
   fillBodyAndImages,
   fillTitle,
@@ -41,6 +42,7 @@ function makeInput(imageCount: number): PostInput {
     jobId: 'job-1',
     category: '여행',
     highlights: '하이라이트',
+    place: '',
     images: Array.from({ length: imageCount }, (_, i) => makeImage(i + 1)),
     createdAt: '2026-08-25T00:00:00.000Z',
   };
@@ -266,5 +268,59 @@ describe('selectCategory (D14)', () => {
     ]);
 
     await expect(selectCategory({ repl }, '  여행  ')).resolves.toBeUndefined();
+  });
+});
+
+describe('buildPlaceText', () => {
+  test('정상: 장소를 글 끝 문단으로 만든다', () => {
+    expect(buildPlaceText('서울 성수동 파스타집')).toBe('\n📍 장소\n서울 성수동 파스타집');
+  });
+
+  test('경계값: 빈 문자열이면 null 이다(문단을 넣지 않는다)', () => {
+    expect(buildPlaceText('')).toBeNull();
+  });
+
+  test('경계값: 공백뿐이면 null 이다', () => {
+    expect(buildPlaceText('   \n ')).toBeNull();
+  });
+
+  test('경계값: 앞뒤 공백을 다듬어 넣는다', () => {
+    expect(buildPlaceText('  성수동  ')).toBe('\n📍 장소\n성수동');
+  });
+});
+
+describe('fillBodyAndImages — 장소', () => {
+  test('정상: 장소를 입력하면 본문 마지막 파트로 붙는다', async () => {
+    const tree = await loadFixture('editor-ready.snapshot.txt');
+    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 4 }))]);
+    const input = { ...makeInput(1), place: '서울 성수동 파스타집' };
+
+    await fillBodyAndImages({ repl }, makeDraft(1), input);
+
+    const js = repl.calls[1].js;
+    expect(js).toContain('📍 장소');
+    expect(js).toContain('서울 성수동 파스타집');
+    // intro → 이미지 1 → outro → 장소 순서 — 장소가 마지막이어야 한다
+    expect(js.lastIndexOf('📍 장소')).toBeGreaterThan(js.lastIndexOf('아웃트로'));
+  });
+
+  test('경계값: 장소가 비어 있으면 장소 문단을 넣지 않는다', async () => {
+    const tree = await loadFixture('editor-ready.snapshot.txt');
+    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 3 }))]);
+    const input = { ...makeInput(1), place: '' };
+
+    await fillBodyAndImages({ repl }, makeDraft(1), input);
+
+    expect(repl.calls[1].js).not.toContain('📍');
+  });
+
+  test('경계값: 공백뿐인 장소도 문단을 만들지 않는다', async () => {
+    const tree = await loadFixture('editor-ready.snapshot.txt');
+    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 3 }))]);
+    const input = { ...makeInput(1), place: '   ' };
+
+    await fillBodyAndImages({ repl }, makeDraft(1), input);
+
+    expect(repl.calls[1].js).not.toContain('📍');
   });
 });

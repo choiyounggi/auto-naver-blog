@@ -30,6 +30,7 @@ function makeInput(): PostInput {
     jobId: 'job-pipeline-test',
     category: '일상',
     highlights: '오늘 다녀온 카페',
+    place: '',
     images: [
       {
         id: 'img-0',

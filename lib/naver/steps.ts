@@ -56,6 +56,13 @@ function parseJsonStdout<T>(stepName: string, stdout: string): T {
   return parsed;
 }
 
+/** 글 맨 끝에 붙일 장소 문단. 입력이 비어 있으면 null 을 돌려준다(문단을 넣지 않는다). */
+export function buildPlaceText(place: string): string | null {
+  const trimmed = place.trim();
+  if (trimmed === '') return null;
+  return `\n📍 장소\n${trimmed}`;
+}
+
 async function fetchTree(ctx: StepCtx, stepName: string, timeoutMs: number): Promise<string> {
   const js = `
 await (async () => {
@@ -356,6 +363,13 @@ export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: P
     parts.push({ kind: 'image', path: input.images[i].path, caption: draft.blocks[i].caption });
   }
   parts.push({ kind: 'text', value: draft.outro });
+
+  // 사용자가 입력한 장소는 글 맨 끝에 붙인다. 초안(LLM)이 아니라 입력값을 그대로 쓰므로
+  // 지어낸 상호명이 들어갈 여지가 없다. 비어 있으면 문단 자체를 넣지 않는다.
+  const placeText = buildPlaceText(input.place);
+  if (placeText !== null) {
+    parts.push({ kind: 'text', value: placeText });
+  }
 
   // fileInput 도 다른 로케이터와 마찬가지로 에디터 iframe(EDITOR_FRAME_NAME) 안 요소다 —
   // cssLocator() 로 같은 frameLocator 우회 경로를 태운다(직접 page.locator() 를 쓰면
