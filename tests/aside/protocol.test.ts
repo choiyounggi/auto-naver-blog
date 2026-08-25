@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { findSentinel, stripAnsi, stripPrompt } from '@/lib/aside/protocol';
+import { findSentinel, parseLastJson, stripAnsi, stripPrompt } from '@/lib/aside/protocol';
 
 // 실측 바이트 그대로 (브리프 measured_facts 2)
 const OK_SENTINEL = '\x1b[2m[ok | 87ms]\x1b[0m';
@@ -69,5 +69,42 @@ describe('stripAnsi', () => {
 describe('stripPrompt', () => {
   test('repl > 프롬프트 조각을 제거한다', () => {
     expect(stripPrompt('repl > hello')).toBe('hello');
+  });
+});
+
+describe('parseLastJson', () => {
+  test('정상: JSON 한 줄만 있으면 그것을 파싱한다', () => {
+    expect(parseLastJson('{"url":"https://blog.naver.com/dev_king"}')).toEqual({
+      url: 'https://blog.naver.com/dev_king',
+    });
+  });
+
+  test('정상: openTab 배너가 앞에 붙어도 마지막 JSON 줄을 골라낸다', () => {
+    const stdout = '✔︎ Opened a new tab and set it active: tabs[0], page → NAVER (https://naver.com)\n{"opened":true}';
+    expect(parseLastJson(stdout)).toEqual({ opened: true });
+  });
+
+  test('정상: 배열도 파싱한다', () => {
+    expect(parseLastJson('배너\n[1,2]')).toEqual([1, 2]);
+  });
+
+  test('경계값: 빈 문자열은 null 이다', () => {
+    expect(parseLastJson('')).toBeNull();
+  });
+
+  test('경계값: 공백·개행뿐이면 null 이다', () => {
+    expect(parseLastJson('\n  \n')).toBeNull();
+  });
+
+  test('에러: JSON 줄이 하나도 없으면 null 이다', () => {
+    expect(parseLastJson('그냥 로그\n또 다른 로그')).toBeNull();
+  });
+
+  test('에러: 깨진 JSON 줄만 있으면 null 이다', () => {
+    expect(parseLastJson('{"a":')).toBeNull();
+  });
+
+  test('경계값: 뒤쪽 줄이 깨졌으면 앞쪽의 온전한 JSON 을 쓴다', () => {
+    expect(parseLastJson('{"a":1}\n{"b":')).toEqual({ a: 1 });
   });
 });

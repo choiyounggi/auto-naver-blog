@@ -13,10 +13,13 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 interface UploadFormProps {
   onCreated: (job: JobState) => void;
+  /** 로그인 시 블로그에서 읽어 둔 카테고리 이름들 — 비어 있으면 직접 입력으로 폴백한다 */
+  categories: string[];
 }
 
-export function UploadForm({ onCreated }: UploadFormProps) {
-  const [category, setCategory] = useState('');
+export function UploadForm({ onCreated, categories }: UploadFormProps) {
+  // 카테고리가 하나뿐이면 고를 것도 없으므로 미리 선택해 둔다.
+  const [category, setCategory] = useState(categories.length === 1 ? categories[0] : '');
   const [highlights, setHighlights] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -65,14 +68,40 @@ export function UploadForm({ onCreated }: UploadFormProps) {
         <label className={styles.label} htmlFor="category">
           카테고리
         </label>
-        <input
-          id="category"
-          className={styles.input}
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          required
-          disabled={submitting}
-        />
+        {categories.length > 0 ? (
+          <select
+            id="category"
+            className={styles.input}
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            required
+            disabled={submitting}
+          >
+            <option value="" disabled>
+              카테고리를 고르세요
+            </option>
+            {categories.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            <input
+              id="category"
+              className={styles.input}
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              required
+              disabled={submitting}
+            />
+            <p className={styles.hint}>
+              블로그에서 카테고리를 읽지 못했습니다 — 블로그의 실제 카테고리 이름과 정확히 같게
+              입력하세요.
+            </p>
+          </>
+        )}
       </div>
 
       <div className={styles.field}>

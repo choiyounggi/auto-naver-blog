@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Onboarding } from './components/Onboarding';
 import { PreviewApproval } from './components/PreviewApproval';
 import { ProgressLog } from './components/ProgressLog';
 import { UploadForm } from './components/UploadForm';
 import { phaseLabel, safeHref } from '@/lib/job/ui-logic';
+import type { SetupState } from '@/lib/aside/blog-meta';
 import type { JobPhase, JobState } from '@/lib/types';
 import styles from './page.module.css';
 
@@ -22,6 +24,9 @@ const PROGRESS_PHASES: ReadonlySet<JobPhase> = new Set([
 export default function Home() {
   const [job, setJob] = useState<JobState | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  // null = 아직 확인 전. 온보딩을 마쳤는지 서버(=.env·쿠키 파일)에 물어본다.
+  const [setup, setSetup] = useState<SetupState | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
   // ProgressLog의 EventSource가 매 렌더마다 재구독하지 않도록, refreshJob은 안정된
   // 참조를 유지하고 최신 jobId는 ref로만 읽는다.
   const jobRef = useRef<JobState | null>(null);
@@ -41,6 +46,23 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/setup');
+        if (!response.ok) throw new Error(`설정 상태를 불러오지 못했습니다 (${response.status})`);
+        const state = (await response.json()) as SetupState;
+        if (!cancelled) setSetup(state);
+      } catch (err) {
+        if (!cancelled) setSetupError(err instanceof Error ? err.message : '설정 상태를 불러오지 못했습니다.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function handleReset() {
     setJob(null);
     setRefreshError(null);
@@ -55,7 +77,13 @@ export default function Home() {
 
       {refreshError && <p className={styles.warning}>{refreshError}</p>}
 
-      {!job && <UploadForm onCreated={setJob} />}
+      {setupError && <p className={styles.warning}>{setupError}</p>}
+
+      {!job && setup !== null && !setup.ready && <Onboarding state={setup} onState={setSetup} />}
+
+      {!job && setup !== null && setup.ready && (
+        <UploadForm onCreated={setJob} categories={setup.categories} />
+      )}
 
       {job && PROGRESS_PHASES.has(job.phase) && <ProgressLog jobId={job.id} onProgress={refreshJob} />}
 

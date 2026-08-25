@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
 import path from 'node:path';
+import { MY_BLOG_URL, parseBlogIdFromUrl } from './blog-meta';
+import { parseLastJson } from './protocol';
 import type { AppConfig } from '../config';
 import type { AsideReplApi, NaverSessionApi, NaverSessionStatus } from '../types';
 
@@ -13,7 +15,7 @@ function isNaverDomain(domain: unknown): boolean {
 
 // D5: 관찰된 응답 경로(`{ cookies: [...] }`)만 신뢰한다. 다른 필드는 추측하지 않는다.
 const EXPORT_COOKIES_JS = `
-(async () => {
+await (async () => {
   const result = await page.cdp.send('Storage.getCookies');
   console.log(JSON.stringify(result));
 })();
@@ -22,7 +24,7 @@ const EXPORT_COOKIES_JS = `
 function buildImportCookiesJs(cookies: unknown[]): string {
   // danger_zone: 쿠키 저장소를 비우는 CDP 호출은 이 모듈 어디에도 있어서는 안 된다. setCookies 는 추가만 한다.
   return `
-(async () => {
+await (async () => {
   await page.cdp.send('Storage.setCookies', { cookies: ${JSON.stringify(cookies)} });
   console.log(JSON.stringify({ restored: ${cookies.length} }));
 })();
@@ -32,16 +34,18 @@ function buildImportCookiesJs(cookies: unknown[]): string {
 // F2(r1): 로그인 여부를 "로그인 페이지로 튕기지 않았다"는 부재(absence)로 판정하지 않는다 —
 // 네트워크 오류·점검 페이지 등 로그인과 무관한 이유로도 nid.naver.com 을 거치지 않을 수 있고,
 // 그 경우 전부 loggedIn:true 로 잘못 판정된다. 대신 로그인 상태에서만 존재하는 신호(presence)
-// 로 판정한다: blog.naver.com 이동 후 자기 블로그(`blog.naver.com/<blogId>`)로 리다이렉트되어
-// blogId 를 추출할 수 있는지가 그 신호다(D13이 이미 이 값을 "로그인의 blogId" 로 정의해 둠).
+// 로 판정한다: "내 블로그"로 이동한 뒤 `blog.naver.com/<blogId>` 로 리다이렉트되어 blogId 를
+// 추출할 수 있는지가 그 신호다(D13이 이미 이 값을 "로그인의 blogId" 로 정의해 둠).
 // blogId 추출에 실패하면 로그인되지 않은 것으로 본다 — status() 가 사유(expired/unknown)를 정한다.
+//
+// 판정은 URL 만 넘기고 blogId 추출은 parseBlogIdFromUrl 이 한다. 이전에는 이 자리에서
+// `/blog\.naver\.com\/([^/?#]+)/` 로 직접 뽑았는데, 로그아웃 상태에서 도달하는
+// `section.blog.naver.com/BlogHome.naver` 에도 매치돼 blogId 를 'BlogHome.naver' 로 읽고
+// loggedIn:true 로 잘못 판정했다(실측).
 const STATUS_CHECK_JS = `
-(async () => {
-  await page.goto('https://blog.naver.com');
-  const url = page.url();
-  const match = url.match(/blog\\.naver\\.com\\/([^/?#]+)/);
-  const blogId = match ? match[1] : null;
-  console.log(JSON.stringify({ blogId }));
+await (async () => {
+  await page.goto(${JSON.stringify(MY_BLOG_URL)}, { waitUntil: 'domcontentloaded' });
+  console.log(JSON.stringify({ url: page.url() }));
 })();
 `;
 
@@ -123,10 +127,8 @@ export class NaverSession implements NaverSessionApi {
       return { loggedIn: false, reason: 'unknown', checkedAt };
     }
 
-    let parsed: { blogId?: unknown };
-    try {
-      parsed = JSON.parse(result.stdout);
-    } catch {
+    const parsed = parseLastJson<{ url?: unknown }>(result.stdout);
+    if (parsed === null) {
       return { loggedIn: false, reason: 'unknown', checkedAt };
     }
 
@@ -134,7 +136,7 @@ export class NaverSession implements NaverSessionApi {
     // 본다. 이 시점까지 evaluate() 자체는 성공했으므로(판정을 시도할 수 있었으므로) 사유는
     // 'unknown' 이 아니라 'expired' 다 — 판정 자체를 못 한 경우(evaluate 실패·JSON 파싱
     // 실패)는 이미 위에서 'unknown' 으로 갈렸다.
-    const pageBlogId = typeof parsed.blogId === 'string' && parsed.blogId.length > 0 ? parsed.blogId : null;
+    const pageBlogId = parseBlogIdFromUrl(parsed.url);
     if (!pageBlogId) {
       return { loggedIn: false, reason: 'expired', checkedAt };
     }

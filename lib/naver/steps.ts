@@ -27,6 +27,7 @@ import {
   writeUrl,
 } from './selectors';
 import { excerptAround, findEntriesByRole, findRefByRoleAndName } from './snapshot-query';
+import { parseLastJson } from '../aside/protocol';
 
 export interface StepCtx {
   repl: AsideReplApi;
@@ -48,16 +49,16 @@ async function runEvaluate(ctx: StepCtx, stepName: string, js: string, timeoutMs
 }
 
 function parseJsonStdout<T>(stepName: string, stdout: string): T {
-  try {
-    return JSON.parse(stdout) as T;
-  } catch {
+  const parsed = parseLastJson<T>(stdout);
+  if (parsed === null) {
     throw new EvaluationFailedError(stepName, `evaluate 응답을 JSON으로 파싱하지 못함: ${stdout.slice(0, 300)}`);
   }
+  return parsed;
 }
 
 async function fetchTree(ctx: StepCtx, stepName: string, timeoutMs: number): Promise<string> {
   const js = `
-(async () => {
+await (async () => {
   const result = await snapshot(page, { interactive: true });
   console.log(JSON.stringify({ tree: result.tree }));
 })();
@@ -111,7 +112,7 @@ async function resolveLocator(
   if (opts.cssSelector) {
     const candidate = cssLocator(opts.cssSelector, opts.insideEditorFrame);
     const checkJs = `
-(async () => {
+await (async () => {
   const count = await (${candidate.expr}).count();
   console.log(JSON.stringify({ count }));
 })();
@@ -130,7 +131,7 @@ async function resolveLocator(
 
 async function clickLocator(ctx: StepCtx, stepName: string, locator: LocatorRef, timeoutMs: number): Promise<void> {
   const js = `
-(async () => {
+await (async () => {
   await (${locator.expr}).click();
   console.log(JSON.stringify({ clicked: true }));
 })();
@@ -148,7 +149,7 @@ async function typeIntoLocator(
   // D7: value 는 JSON.stringify 로 직렬화해 리터럴로 주입한다 — 문자열 연결 금지.
   // 브리프: 제목/본문은 <input> 이 아니라 contenteditable 이다 — 클릭 후 키보드 입력.
   const js = `
-(async () => {
+await (async () => {
   const target = (${locator.expr});
   await target.click();
   await target.pressSequentially(${JSON.stringify(value)});
@@ -170,7 +171,7 @@ export async function openEditor(ctx: StepCtx, blogId: string): Promise<string> 
   const stepName = 'openEditor';
   const url = writeUrl(blogId);
   const js = `
-(async () => {
+await (async () => {
   page = await openTab(${JSON.stringify(url)});
   await page.waitForLoadState('load');
   const result = await snapshot(page, { interactive: true });
@@ -203,7 +204,7 @@ export async function openEditor(ctx: StepCtx, blogId: string): Promise<string> 
 export async function closeCurrentTab(ctx: StepCtx): Promise<void> {
   const stepName = 'closeCurrentTab';
   const js = `
-(async () => {
+await (async () => {
   if (typeof page !== 'undefined' && page) {
     await closeTab(page);
   }
@@ -225,7 +226,7 @@ export async function dismissEntryPopups(ctx: StepCtx): Promise<void> {
 
   for (const target of targets) {
     const js = `
-(async () => {
+await (async () => {
   const locator = page.locator(${JSON.stringify(target.selector)});
   const count = await locator.count();
   if (count > 0) {
@@ -363,7 +364,7 @@ export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: P
 
   // D7: parts 전체(사용자 값 포함)를 JSON.stringify 로 직렬화해 주입한다.
   const js = `
-(async () => {
+await (async () => {
   const body = (${bodyLocator.expr});
   const imageButton = (${imageButtonLocator.expr});
   const fileInput = (${fileInputLocator.expr});
@@ -427,7 +428,7 @@ export async function setTags(ctx: StepCtx, tags: string[]): Promise<void> {
 
   // D7: tags 는 JSON.stringify 로 직렬화해 주입한다.
   const js = `
-(async () => {
+await (async () => {
   const target = (${locator.expr});
   await target.click();
   const tags = ${JSON.stringify(tags)};
@@ -446,7 +447,7 @@ export async function setTags(ctx: StepCtx, tags: string[]): Promise<void> {
 export async function capturePreview(ctx: StepCtx, screenshotPath: string): Promise<void> {
   const stepName = 'capturePreview';
   const js = `
-(async () => {
+await (async () => {
   await page.screenshot({ path: ${JSON.stringify(screenshotPath)} });
   console.log(JSON.stringify({ ok: true }));
 })();
@@ -478,7 +479,7 @@ export async function submitPublish(ctx: StepCtx): Promise<SubmitPublishResult> 
   );
 
   const js = `
-(async () => {
+await (async () => {
   ${PUBLISH_CLICK_MARKER}
   await (${locator.expr}).click();
   await page.waitForLoadState('load');

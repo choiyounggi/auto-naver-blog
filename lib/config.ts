@@ -18,6 +18,11 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.dirname(moduleDir);
 
+// `npm run naver:login` 이 블로그 아이디·카테고리를 기록하고, 온보딩 API 가 읽는 파일.
+// process.env 가 아니라 이 파일을 직접 읽는 이유는 서버가 뜬 뒤 로그인해도 값이 반영돼야
+// 하기 때문이다 — Next 는 부팅 시점에만 .env 를 읽는다.
+export const ENV_FILE_PATH = path.join(repoRoot, '.env');
+
 // F2: repoRoot is derived from import.meta.url, which would silently point inside a
 // bundled output dir (e.g. .next/server/...) if a future bundler ever relocates this
 // module. Fail loudly at startup instead of writing data under the wrong root.

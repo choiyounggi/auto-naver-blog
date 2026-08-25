@@ -44,3 +44,24 @@ export function findSentinel(
   if (ok && error) return ok.index <= error.index ? ok : error;
   return ok ?? error;
 }
+
+// aside repl 은 일부 헬퍼(openTab 등)에서 사람이 읽는 배너를 stdout 에 먼저 찍는다
+// (예: "✔︎ Opened a new tab and set it active: ..."). 그래서 stdout 전체를 JSON.parse 하면
+// 실패한다 — 스텝이 마지막에 찍은 JSON 한 줄만 골라낸다.
+export function parseLastJson<T>(stdout: string): T | null {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.startsWith('{') && !line.startsWith('[')) continue;
+    try {
+      return JSON.parse(line) as T;
+    } catch {
+      // 이 줄은 JSON 이 아니다 — 앞줄로 계속 올라간다
+    }
+  }
+  return null;
+}

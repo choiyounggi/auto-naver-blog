@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // 네이버 로그인 부트스트랩 CLI.
 // 사람이 Aside 브라우저에서 직접 로그인하도록 페이지를 열어주고, 로그인 완료를 감지하면
-// 쿠키를 저장한다. ID/PW 를 자동으로 입력하지 않으며, 자격증명을 인자·환경변수로도 받지 않는다.
+// 쿠키를 저장한 뒤 블로그 아이디와 카테고리 목록을 뽑아 .env 에 기록한다.
+// ID/PW 를 자동으로 입력하지 않으며, 자격증명을 인자·환경변수로도 받지 않는다.
+//
+// 실제 절차는 lib/aside/login-flow.ts 에 있다 — 웹 온보딩 화면도 같은 코드를 쓴다.
 
 import { registerHooks } from 'node:module';
 
@@ -22,51 +25,10 @@ registerHooks({
   },
 });
 
-const { loadConfig } = await import('../lib/config.ts');
+const { loadConfig, ENV_FILE_PATH } = await import('../lib/config.ts');
 const { AsideRepl } = await import('../lib/aside/repl.ts');
 const { NaverSession } = await import('../lib/aside/naver-session.ts');
-
-const LOGIN_URL = 'https://nid.naver.com/nidlogin.login';
-const POLL_INTERVAL_MS = 3000;
-const LOGIN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
-
-const OPEN_LOGIN_JS = `
-(async () => {
-  await openTab(${JSON.stringify(LOGIN_URL)});
-  console.log(JSON.stringify({ opened: true }));
-})();
-`;
-
-// 탭을 새로 열지도, 다른 페이지로 이동시키지도 않는다 — 현재 URL만 읽어 로그인 완료 여부를
-// 추정한다. 사용자가 로그인 폼을 채우는 도중 탭을 이동시키면 안 되기 때문이다.
-const READ_CURRENT_URL_JS = `
-(async () => {
-  console.log(JSON.stringify({ url: page.url() }));
-})();
-`;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForLogin(repl) {
-  const deadline = Date.now() + LOGIN_WAIT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const result = await repl.evaluate(READ_CURRENT_URL_JS);
-    if (result.ok) {
-      try {
-        const { url } = JSON.parse(result.stdout);
-        if (typeof url === 'string' && !url.includes('nid.naver.com')) {
-          return true;
-        }
-      } catch {
-        // 파싱 실패는 무시하고 다음 폴링을 기다린다
-      }
-    }
-    await sleep(POLL_INTERVAL_MS);
-  }
-  return false;
-}
+const { runNaverLoginFlow } = await import('../lib/aside/login-flow.ts');
 
 async function main() {
   const config = loadConfig();
@@ -76,27 +38,20 @@ async function main() {
   try {
     await repl.start();
 
-    const opened = await repl.evaluate(OPEN_LOGIN_JS);
-    if (!opened.ok) {
-      console.error(`로그인 페이지를 여는 데 실패했습니다: ${opened.error ?? 'unknown error'}`);
-      process.exitCode = 1;
-      return;
+    const result = await runNaverLoginFlow(repl, session, {
+      envPath: ENV_FILE_PATH,
+      onMessage: (message) => console.log(message),
+    });
+
+    console.log(`쿠키 파일: ${config.cookieFile}`);
+    console.log(`블로그 아이디: ${result.blogId}`);
+    console.log(`카테고리 ${result.categories.length}개: ${result.categories.join(', ') || '(없음)'}`);
+    if (result.skippedCategories.length > 0) {
+      console.log(
+        `※ 쉼표·큰따옴표가 들어 있어 .env 에 기록하지 못한 카테고리: ${result.skippedCategories.join(' / ')}`,
+      );
     }
-
-    console.log(
-      "Aside 브라우저에 네이버 로그인 페이지를 열었습니다. 직접 로그인해 주세요. " +
-        "'로그인 상태 유지'를 체크하면 세션이 오래 갑니다. 완료되면 이 창은 자동으로 감지합니다.",
-    );
-
-    const loggedIn = await waitForLogin(repl);
-    if (!loggedIn) {
-      console.error('로그인 대기 시간이 초과되었습니다 (5분). 다시 시도해 주세요.');
-      process.exitCode = 1;
-      return;
-    }
-
-    const savedCount = await session.exportCookies();
-    console.log(savedCount);
+    console.log(`.env 에 기록했습니다: ${ENV_FILE_PATH}`);
   } finally {
     await repl.dispose();
   }

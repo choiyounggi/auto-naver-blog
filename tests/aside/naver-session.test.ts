@@ -37,7 +37,7 @@ function fakeRepl(responses: FakeReplResponses = {}): AsideReplApi {
         return responses.setCookies ?? ok('{"restored":0}');
       }
       if (js.includes('page.goto')) {
-        return responses.statusCheck ?? ok('{"blogId":null}');
+        return responses.statusCheck ?? ok('{"url":null}');
       }
       throw new Error(`예상치 못한 js: ${js}`);
     },
@@ -156,7 +156,7 @@ describe('status — 정상/에러', () => {
     await mkdir(path.dirname(cookieFile), { recursive: true });
     await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
 
-    const repl = fakeRepl({ statusCheck: ok('{"blogId":"myblog"}') });
+    const repl = fakeRepl({ statusCheck: ok('{"url":"https://blog.naver.com/myblog"}') });
     const session = new NaverSession(repl, fixtureConfig(cookieFile));
     const status = await session.status();
     expect(status.loggedIn).toBe(true);
@@ -169,7 +169,33 @@ describe('status — 정상/에러', () => {
 
     // 로그인 페이지로 튕기지 않고 그냥 blog.naver.com 홈을 보여주는 경우도 포함 — url 에
     // nid.naver.com 이 없다고 해서 loggedIn:true 가 되면 안 된다(F2 가 고치려던 바로 그 버그).
-    const repl = fakeRepl({ statusCheck: ok('{"blogId":null}') });
+    const repl = fakeRepl({ statusCheck: ok('{"url":"https://blog.naver.com/"}') });
+    const session = new NaverSession(repl, fixtureConfig(cookieFile));
+    const status = await session.status();
+    expect(status.loggedIn).toBe(false);
+    if (!status.loggedIn) expect(status.reason).toBe('expired');
+  });
+
+  // 실측 회귀: 로그아웃 상태에서 도달하는 홈 피드 URL 에서 'BlogHome.naver' 를 blogId 로
+  // 읽어 loggedIn:true 로 잘못 판정하던 버그를 고정한다.
+  test('(b-2) section.blog.naver.com 홈 피드로 튕기면 loggedIn:false 다', async () => {
+    await mkdir(path.dirname(cookieFile), { recursive: true });
+    await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
+
+    const repl = fakeRepl({
+      statusCheck: ok('{"url":"https://section.blog.naver.com/BlogHome.naver?directoryNo=0"}'),
+    });
+    const session = new NaverSession(repl, fixtureConfig(cookieFile));
+    const status = await session.status();
+    expect(status.loggedIn).toBe(false);
+    if (!status.loggedIn) expect(status.reason).toBe('expired');
+  });
+
+  test('(b-3) 로그인 페이지로 튕기면 loggedIn:false 다', async () => {
+    await mkdir(path.dirname(cookieFile), { recursive: true });
+    await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
+
+    const repl = fakeRepl({ statusCheck: ok('{"url":"https://nid.naver.com/nidlogin.login"}') });
     const session = new NaverSession(repl, fixtureConfig(cookieFile));
     const status = await session.status();
     expect(status.loggedIn).toBe(false);

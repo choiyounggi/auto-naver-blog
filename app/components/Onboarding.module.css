@@ -1,0 +1,108 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-8);
+}
+
+.title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.lead {
+  color: var(--ink-dim);
+  line-height: 1.6;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding-left: var(--space-6);
+  line-height: 1.6;
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+  font-size: 0.875rem;
+}
+
+.checkRow {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.done {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pending {
+  color: var(--ink-dim);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.primaryButton {
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-6);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--paper-sunken);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  color: var(--ink-dim);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.waiting {
+  font-size: 0.875rem;
+  color: var(--ink-dim);
+  line-height: 1.6;
+}
+
+.error {
+  font-size: 0.875rem;
+  color: var(--ink);
+  border-left: 2px solid var(--accent);
+  padding-left: var(--space-3);
+  line-height: 1.6;
+}
+
+.cliHint {
+  font-size: 0.8125rem;
+  color: var(--ink-dim);
+  line-height: 1.6;
+}
