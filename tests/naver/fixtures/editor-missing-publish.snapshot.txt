@@ -1,0 +1,18 @@
+# NOTE(D6): 트리 형식은 t1 이 실측한 것이고 내용은 가설이다 (editor-ready.snapshot.txt 참조).
+# 이 픽스처는 editor-ready 와 동일하되 발행 버튼만 없다 — D3 의 음성 대조(negative control)용:
+# "찾지 못하면 null" 을 증명하는 데 쓴다.
+- generic [ref=e1]
+  - link "네이버 블로그" [ref=e2]
+  - iframe "mainFrame" [ref=e3]
+    - document [ref=f1e0]
+      - generic [ref=f1e1]
+        - button "카테고리" [ref=f1e2]
+        - list [ref=f1e3]
+          - listitem "일상" [ref=f1e4]
+          - listitem "여행" [ref=f1e5]
+          - listitem "맛집" [ref=f1e6]
+        - textbox "제목을 입력하세요" [ref=f1e7]
+        - generic [ref=f1e8]
+          - textbox "본문에 입력하세요" [ref=f1e9]
+        - button "사진" [ref=f1e10]
+        - textbox "태그 입력" [ref=f1e11]
