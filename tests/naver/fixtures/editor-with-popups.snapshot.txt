@@ -1,0 +1,25 @@
+# NOTE(D6): 트리 형식은 t1 이 실측한 것이고 내용은 가설이다 (editor-ready.snapshot.txt 참조).
+# 이 픽스처는 editor-ready 앞에 진입 팝업 2종(작성중인 글 복구, 도움말 패널)이 떠 있는
+# 상태를 더한 것이다 — 팝업 노드가 트리 앞쪽에 섞여 있어도 iframe 안 필수 요소 조회(D5)가
+# 방해받지 않는지 확인하는 데 쓴다.
+- generic [ref=e1]
+  - generic "작성 중인 글이 있습니다" [ref=e9]
+    - button "취소" [ref=e10]
+  - generic "도움말" [ref=e11]
+    - button "닫기" [ref=e12]
+  - link "네이버 블로그" [ref=e2]
+  - iframe "mainFrame" [ref=e3]
+    - document [ref=f1e0]
+      - generic [ref=f1e1]
+        - button "카테고리" [ref=f1e2]
+        - list [ref=f1e3]
+          - listitem "일상" [ref=f1e4]
+          - listitem "여행" [ref=f1e5]
+          - listitem "맛집" [ref=f1e6]
+        - textbox "제목을 입력하세요" [ref=f1e7]
+        - generic [ref=f1e8]
+          - textbox "본문에 입력하세요" [ref=f1e9]
+        - button "사진" [ref=f1e10]
+        - button "대표사진으로 설정" [ref=f1e13]
+        - textbox "태그 입력" [ref=f1e11]
+        - button "발행" [ref=f1e12]

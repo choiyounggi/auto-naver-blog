@@ -1,0 +1,20 @@
+# NOTE(D6): 트리 형식(`- role "name" [ref=id]`; iframe 내부는 f1e1 형태의 ref)은 t1 이
+# 실측한 aside snapshot() 출력 형식이다. 아래 내용(요소 구성·이름)은 가설이며 실제
+# 스마트에디터를 관찰해 만든 것이 아니다 — lib/naver/selectors.ts 의 [추정] 상수와 대응한다.
+- generic [ref=e1]
+  - link "네이버 블로그" [ref=e2]
+  - iframe "mainFrame" [ref=e3]
+    - document [ref=f1e0]
+      - generic [ref=f1e1]
+        - button "카테고리" [ref=f1e2]
+        - list [ref=f1e3]
+          - listitem "일상" [ref=f1e4]
+          - listitem "여행" [ref=f1e5]
+          - listitem "맛집" [ref=f1e6]
+        - textbox "제목을 입력하세요" [ref=f1e7]
+        - generic [ref=f1e8]
+          - textbox "본문에 입력하세요" [ref=f1e9]
+        - button "사진" [ref=f1e10]
+        - button "대표사진으로 설정" [ref=f1e13]
+        - textbox "태그 입력" [ref=f1e11]
+        - button "발행" [ref=f1e12]

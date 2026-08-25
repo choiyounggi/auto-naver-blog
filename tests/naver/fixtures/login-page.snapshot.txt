@@ -1,0 +1,8 @@
+# NOTE(D6): 트리 형식은 t1 이 실측한 것이고 내용은 가설이다 (editor-ready.snapshot.txt 참조).
+# 이 픽스처는 로그인 페이지로 튕겼을 때의 트리다 — mainFrame iframe 이 없다는 것이 신호다
+# (openEditor 의 "엉뚱한 페이지 진입" 감지 로직이 이걸 판정 기준으로 쓴다).
+- generic [ref=e1]
+  - heading "네이버 로그인" [ref=e2]
+  - textbox "아이디" [ref=e3]
+  - textbox "비밀번호" [ref=e4]
+  - button "로그인" [ref=e5]
