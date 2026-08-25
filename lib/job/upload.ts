@@ -34,8 +34,17 @@ export function mimeTypeFor(type: SniffedImageType): string {
 }
 
 // D4: 정규화 후 절대경로 접두사 검증. 문자열 검사(예: includes('..'))만으로 막지 않는다.
+// r1 리뷰 F1: imagesDir 자체가 jobId로 조립되므로, imageId를 검증하기 전에
+// imagesDir이 baseDir 하위인지부터 검증한다 — imageId 쪽만 검사하면 jobId로
+// baseDir 밖으로 이미 탈출한 뒤라 늦다.
 export function resolveImagePathWithin(baseDir: string, jobId: string, imageId: string): string {
+  const resolvedBase = path.resolve(baseDir);
+  const basePrefix = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
   const imagesDir = path.resolve(baseDir, 'jobs', jobId, 'images');
+  if (!imagesDir.startsWith(basePrefix)) {
+    throw new Error(`resolveImagePathWithin: jobId '${jobId}' escapes the data directory`);
+  }
+
   const prefix = imagesDir.endsWith(path.sep) ? imagesDir : imagesDir + path.sep;
   const candidate = path.resolve(imagesDir, imageId);
   if (!candidate.startsWith(prefix)) {

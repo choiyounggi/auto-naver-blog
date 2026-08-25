@@ -71,4 +71,24 @@ describe('resolveImagePathWithin', () => {
   test('경계값: 빈 문자열 imageId는 throw한다 (images 디렉토리 자체를 가리키므로 파일이 아님)', () => {
     expect(() => resolveImagePathWithin(base, 'job-1', '')).toThrow();
   });
+
+  // r1 리뷰 F1: jobId도 imageId와 동일하게 탈출 여부를 검증해야 한다 —
+  // imagesDir 자체가 jobId로 조립되므로, 그 결과가 baseDir 밖이면 imageId가
+  // 아무리 안전해도 이미 늦다.
+  test('에러: jobId가 ../../../../etc 형태면 throw한다 (F1)', () => {
+    expect(() => resolveImagePathWithin(base, '../../../../etc', 'a.png')).toThrow();
+  });
+
+  test('에러: jobId가 a/../../.. 형태면 throw한다 (F1)', () => {
+    expect(() => resolveImagePathWithin(base, 'a/../../..', 'a.png')).toThrow();
+  });
+
+  test('에러: jobId가 절대경로면 throw한다 (F1)', () => {
+    expect(() => resolveImagePathWithin(base, '/etc', 'a.png')).toThrow();
+  });
+
+  test('경계값: 정상적인 jobId와 imageId는 정상 경로를 반환한다 (양성 대조, F1)', () => {
+    const resolved = resolveImagePathWithin(base, 'ok', 'a.png');
+    expect(resolved).toBe(path.join(base, 'jobs', 'ok', 'images', 'a.png'));
+  });
 });
