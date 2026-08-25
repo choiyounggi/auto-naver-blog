@@ -1,0 +1,26 @@
+# deps / build
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# orchestration
+.orchestration/
+.worktrees/
+
+# runtime data — NEVER commit: contains Naver login cookies
+data/
+uploads/
+artifacts/
+
+# env
+.env
+.env.local
+.env*.local
+
+# os / editor
+.DS_Store
+*.log
+npm-debug.log*
+.vitest-tmp/
