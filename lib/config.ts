@@ -50,7 +50,13 @@ function parsePositiveIntMs(raw: string, envVarName: string): number {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  assertRepoRootSane();
+  // F5: only require a sane repoRoot when it is actually about to be consumed — an
+  // explicit ANB_DATA_DIR bypasses repo-root inference entirely, and defaultCookieFile
+  // below derives from the resolved dataDir (not repoRoot directly), so it needs no
+  // separate check.
+  if (env.ANB_DATA_DIR === undefined) {
+    assertRepoRootSane();
+  }
 
   const defaultDataDir = path.join(repoRoot, 'data');
   const dataDir = resolvePathValue(env.ANB_DATA_DIR ?? defaultDataDir, 'ANB_DATA_DIR');

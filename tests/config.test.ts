@@ -13,6 +13,17 @@ describe('loadConfig — 정상', () => {
     const config = loadConfig(fixtureEnv({ ANB_CLAUDE_BIN: '/usr/local/bin/claude' }));
     expect(config.claudeBin).toBe('/usr/local/bin/claude');
   });
+
+  test('ANB_DATA_DIR과 ANB_COOKIE_FILE을 모두 절대경로로 주면 repoRoot 추론과 무관하게 성공한다 (F5)', () => {
+    const config = loadConfig(
+      fixtureEnv({
+        ANB_DATA_DIR: '/srv/anb/data',
+        ANB_COOKIE_FILE: '/srv/anb/data/naver-cookies.json',
+      }),
+    );
+    expect(config.dataDir).toBe('/srv/anb/data');
+    expect(config.cookieFile).toBe('/srv/anb/data/naver-cookies.json');
+  });
 });
 
 describe('loadConfig — 숫자 기본값 (D7)', () => {
