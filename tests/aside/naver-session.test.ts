@@ -37,7 +37,7 @@ function fakeRepl(responses: FakeReplResponses = {}): AsideReplApi {
         return responses.setCookies ?? ok('{"restored":0}');
       }
       if (js.includes('page.goto')) {
-        return responses.statusCheck ?? ok('{"loggedIn":false,"blogId":null}');
+        return responses.statusCheck ?? ok('{"blogId":null}');
       }
       throw new Error(`예상치 못한 js: ${js}`);
     },
@@ -149,25 +149,41 @@ describe('status — 정상/에러', () => {
     if (!status.loggedIn) expect(status.reason).toBe('unknown');
   });
 
-  test('쿠키는 있지만 로그인 판정이 실패하면 reason:"expired" 를 반환한다', async () => {
+  // F2(r1): 로그인 여부는 "로그인 페이지로 튕기지 않았다"는 부재가 아니라, 로그인 상태에서만
+  // 존재하는 신호(blogId 추출 성공)의 존재로 판정한다. 아래 세 케이스가 그 판정을 고정한다.
+
+  test('(a) 양성 신호(blogId 추출 성공)가 있으면 loggedIn:true 와 그 blogId 를 반환한다', async () => {
     await mkdir(path.dirname(cookieFile), { recursive: true });
     await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
 
-    const repl = fakeRepl({ statusCheck: ok('{"loggedIn":false,"blogId":null}') });
+    const repl = fakeRepl({ statusCheck: ok('{"blogId":"myblog"}') });
+    const session = new NaverSession(repl, fixtureConfig(cookieFile));
+    const status = await session.status();
+    expect(status.loggedIn).toBe(true);
+    if (status.loggedIn) expect(status.blogId).toBe('myblog');
+  });
+
+  test('(b) 양성 신호가 없고 쿠키는 있으면 reason:"expired" 를 반환한다', async () => {
+    await mkdir(path.dirname(cookieFile), { recursive: true });
+    await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
+
+    // 로그인 페이지로 튕기지 않고 그냥 blog.naver.com 홈을 보여주는 경우도 포함 — url 에
+    // nid.naver.com 이 없다고 해서 loggedIn:true 가 되면 안 된다(F2 가 고치려던 바로 그 버그).
+    const repl = fakeRepl({ statusCheck: ok('{"blogId":null}') });
     const session = new NaverSession(repl, fixtureConfig(cookieFile));
     const status = await session.status();
     expect(status.loggedIn).toBe(false);
     if (!status.loggedIn) expect(status.reason).toBe('expired');
   });
 
-  test('로그인 상태면 loggedIn:true 와 blogId 를 반환한다', async () => {
+  test('(c) 로그인 확인 evaluate() 자체가 실패하면(ok:false) reason:"unknown" 을 반환한다', async () => {
     await mkdir(path.dirname(cookieFile), { recursive: true });
     await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
 
-    const repl = fakeRepl({ statusCheck: ok('{"loggedIn":true,"blogId":"myblog"}') });
+    const repl = fakeRepl({ statusCheck: fail('네비게이션 실패') });
     const session = new NaverSession(repl, fixtureConfig(cookieFile));
     const status = await session.status();
-    expect(status.loggedIn).toBe(true);
-    if (status.loggedIn) expect(status.blogId).toBe('myblog');
+    expect(status.loggedIn).toBe(false);
+    if (!status.loggedIn) expect(status.reason).toBe('unknown');
   });
 });

@@ -70,16 +70,42 @@ describe('AsideRepl.evaluate — 경계값/타임아웃', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/timeout/);
   });
+});
 
-  test('D6 회귀: 타임아웃 직후 정상 스텝을 실행하면 자기 결과만 담고 앞 스텝의 흔적이 없다', async () => {
+// F1 리뷰(r1): 타임아웃된 스텝의 센티넬이 나중에라도 도착하면, 그 시점에 이미 큐에서 시작된
+// 다음 스텝의 버퍼에 붙어 다음 스텝의 결과로 잘못 resolve 되던 문제. 드레이닝 상태가 그
+// 늦은 출력을 다음 스텝이 시작되기 전에 흡수/폐기해야 한다.
+describe('AsideRepl.evaluate — F1 드레이닝/오염 상태 회귀', () => {
+  test('타임아웃된 스텝의 늦은 출력이 다음 스텝의 결과로 새지 않는다', async () => {
     const repl = await startRepl();
-    const timedOut = await repl.evaluate('__FAKE_HANG__', { timeoutMs: 200 });
+    // A: 타임아웃(30ms)보다 훨씬 뒤(150ms)에 실제로 센티넬을 낸다.
+    // B: 그보다도 더 늦게(자기 줄을 받은 시점부터 250ms 뒤) 센티넬을 낸다 — 그래서 A의
+    // 늦은 출력(150ms 시점)이 도착할 때 B 는 아직 자기 센티넬을 받기 전, 즉 "아직 진행
+    // 중"인 상태가 된다. 드레이닝이 없다면 이 시점에 A의 센티넬이 B의 버퍼에 붙어 B를
+    // "A의 결과"로 잘못 resolve 한다 — 이게 F1 이 실제로 재현되는 조건이다.
+    const timedOut = await repl.evaluate('__FAKE_SLOW__:150:late-A', { timeoutMs: 30 });
     expect(timedOut.ok).toBe(false);
+    expect(timedOut.error).toMatch(/timeout/);
 
-    const second = await repl.evaluate('__FAKE_ECHO__:second');
+    const second = await repl.evaluate('__FAKE_SLOW__:250:B-text');
     expect(second.ok).toBe(true);
-    expect(second.stdout).toContain('second');
-    expect(second.stdout).not.toMatch(/HANG|timeout/i);
+    expect(second.stdout).toContain('B-text');
+    expect(second.stdout).not.toContain('late-A');
+  });
+
+  test('드레이닝 예산을 넘기면 poisoned 상태로 전환되어 이후 evaluate() 가 즉시 실패한다', async () => {
+    const repl = await startRepl({ asideStepTimeoutMs: 150 });
+    // __FAKE_HANG__ 은 영원히 침묵하므로 드레이닝이 끝날 신호(늦은 센티넬)가 오지 않는다 —
+    // 드레이닝 예산(asideStepTimeoutMs=150ms)을 넘기면 poisoned 로 전환돼야 한다.
+    const timedOut = await repl.evaluate('__FAKE_HANG__', { timeoutMs: 30 });
+    expect(timedOut.ok).toBe(false);
+    expect(timedOut.error).toMatch(/timeout/);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const afterPoison = await repl.evaluate('__FAKE_ECHO__:should-not-run');
+    expect(afterPoison.ok).toBe(false);
+    expect(afterPoison.error).toMatch(/동기화 상실/);
   });
 });
 

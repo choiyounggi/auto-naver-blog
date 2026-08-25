@@ -29,15 +29,19 @@ function buildImportCookiesJs(cookies: unknown[]): string {
 `;
 }
 
-// D10: blog.naver.com 이동 후 로그인 페이지로 리다이렉트됐는지로 로그인 여부를 판정한다.
+// F2(r1): 로그인 여부를 "로그인 페이지로 튕기지 않았다"는 부재(absence)로 판정하지 않는다 —
+// 네트워크 오류·점검 페이지 등 로그인과 무관한 이유로도 nid.naver.com 을 거치지 않을 수 있고,
+// 그 경우 전부 loggedIn:true 로 잘못 판정된다. 대신 로그인 상태에서만 존재하는 신호(presence)
+// 로 판정한다: blog.naver.com 이동 후 자기 블로그(`blog.naver.com/<blogId>`)로 리다이렉트되어
+// blogId 를 추출할 수 있는지가 그 신호다(D13이 이미 이 값을 "로그인의 blogId" 로 정의해 둠).
+// blogId 추출에 실패하면 로그인되지 않은 것으로 본다 — status() 가 사유(expired/unknown)를 정한다.
 const STATUS_CHECK_JS = `
 (async () => {
   await page.goto('https://blog.naver.com');
   const url = page.url();
-  const loggedIn = !url.includes('nid.naver.com');
   const match = url.match(/blog\\.naver\\.com\\/([^/?#]+)/);
   const blogId = match ? match[1] : null;
-  console.log(JSON.stringify({ loggedIn, blogId }));
+  console.log(JSON.stringify({ blogId }));
 })();
 `;
 
@@ -119,28 +123,25 @@ export class NaverSession implements NaverSessionApi {
       return { loggedIn: false, reason: 'unknown', checkedAt };
     }
 
-    let parsed: { loggedIn?: unknown; blogId?: unknown };
+    let parsed: { blogId?: unknown };
     try {
       parsed = JSON.parse(result.stdout);
     } catch {
       return { loggedIn: false, reason: 'unknown', checkedAt };
     }
 
-    if (typeof parsed.loggedIn !== 'boolean') {
-      return { loggedIn: false, reason: 'unknown', checkedAt };
-    }
-
-    if (!parsed.loggedIn) {
+    // F2(r1): 페이지에서 blogId 를 뽑아내지 못하면(양성 신호 없음) 로그인되지 않은 것으로
+    // 본다. 이 시점까지 evaluate() 자체는 성공했으므로(판정을 시도할 수 있었으므로) 사유는
+    // 'unknown' 이 아니라 'expired' 다 — 판정 자체를 못 한 경우(evaluate 실패·JSON 파싱
+    // 실패)는 이미 위에서 'unknown' 으로 갈렸다.
+    const pageBlogId = typeof parsed.blogId === 'string' && parsed.blogId.length > 0 ? parsed.blogId : null;
+    if (!pageBlogId) {
       return { loggedIn: false, reason: 'expired', checkedAt };
     }
 
-    // D13: config.naverBlogId 가 우선, 없으면 페이지에서 읽어낸 값을 쓴다. 둘 다 없으면 unknown.
-    const pageBlogId = typeof parsed.blogId === 'string' ? parsed.blogId : null;
+    // D13: 로그인은 이미 페이지 신호로 확인됐다 — blogId 값 자체는 config.naverBlogId 가
+    // 있으면 그걸 우선하고, 없으면 페이지에서 읽어낸 값을 쓴다.
     const blogId = this.config.naverBlogId ?? pageBlogId;
-    if (!blogId) {
-      return { loggedIn: false, reason: 'unknown', checkedAt };
-    }
-
     return { loggedIn: true, blogId, checkedAt };
   }
 }
