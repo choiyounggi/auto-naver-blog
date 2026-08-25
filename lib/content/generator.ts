@@ -67,6 +67,8 @@ export class ContentGenerator implements ContentGeneratorApi {
 // response against the request (image count/order/thumbnail), not just the
 // response's own shape.
 function assertStructuralInvariants(draft: PostDraft, input: PostInput): void {
+  assertInputOrderInvariant(input);
+
   if (draft.blocks.length !== input.images.length) {
     throw new Error(
       `blocks 개수가 이미지 수와 다릅니다: blocks=${draft.blocks.length}, images=${input.images.length}`,
@@ -89,6 +91,21 @@ function assertStructuralInvariants(draft: PostDraft, input: PostInput): void {
 
   if (draft.tags.length < 1) {
     throw new Error('tags가 비어 있습니다: 최소 1개 이상이어야 합니다.');
+  }
+}
+
+// review r1 F1: order는 배열 순서와 별개로 저장되는 진실이다. 배열 위치만 보고 썸네일/블록
+// 순서를 판정하면, 배열이 order와 다른 순서로 전달될 때(재구성·직렬화 왕복 등) 조용히
+// 엉뚱한 이미지가 썸네일로 통과한다. 배열 위치 기반 검사를 신뢰하기 전에 이 둘이 같은
+// 뜻임을 먼저 확인한다. 어긋난 입력은 정렬해서 고쳐 넣지 않고 거부한다.
+function assertInputOrderInvariant(input: PostInput): void {
+  for (let i = 0; i < input.images.length; i++) {
+    if (input.images[i].order !== i) {
+      throw new Error(
+        `input.images의 order가 배열 순서와 다릅니다: images[${i}].order=${input.images[i].order}, 기대값=${i} ` +
+          `(order는 0부터 오름차순으로 연속이어야 합니다).`,
+      );
+    }
   }
 }
 

@@ -48,6 +48,18 @@ function makeInput(opts: { imageCount: number; fakeMode: string }): PostInput {
   };
 }
 
+// review r1 F1: order를 배열 위치와 독립적으로 지정할 수 있게 하는 헬퍼 — 배열 순서와
+// order 필드가 어긋난 입력을 재현한다.
+function makeInputWithOrders(orders: number[], fakeMode: string): PostInput {
+  return {
+    jobId: 'job-1',
+    category: '카페',
+    highlights: `FAKE_MODE:${fakeMode}`,
+    images: orders.map((order, i) => ({ ...makeImage(i + 1), order })),
+    createdAt: '2026-08-25T00:00:00.000Z',
+  };
+}
+
 describe('ContentGenerator.generate — 정상', () => {
   test('이미지 2장: blocks가 1:1로 대응하고 실제 모델명이 기록된다', async () => {
     const generator = new ContentGenerator(fakeConfig());
@@ -97,6 +109,20 @@ describe('ContentGenerator.generate — 에러', () => {
     const input = makeInput({ imageCount: 2, fakeMode: 'auth-failure' });
 
     await expect(generator.generate(input)).rejects.toThrow(/is_error/);
+  });
+
+  test('order가 [1,0]인 2장짜리 입력(배열 순서와 order가 어긋남): throw, 메시지가 순서 문제를 가리킨다 (F1)', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInputWithOrders([1, 0], 'success');
+
+    await expect(generator.generate(input)).rejects.toThrow(/order/);
+  });
+
+  test('order가 [0,2]로 연속이 아닌 입력: throw (F1)', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInputWithOrders([0, 2], 'success');
+
+    await expect(generator.generate(input)).rejects.toThrow(/order/);
   });
 });
 
