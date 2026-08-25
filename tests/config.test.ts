@@ -42,6 +42,12 @@ describe('loadConfig — 에러', () => {
   test('ANB_CLAUDE_TIMEOUT_MS=abc 는 메시지에 abc를 포함해 throw한다', () => {
     expect(() => loadConfig(fixtureEnv({ ANB_CLAUDE_TIMEOUT_MS: 'abc' }))).toThrowError(/abc/);
   });
+
+  test('ANB_COOKIE_FILE=./cookies.json 은 원시값을 포함해 throw한다 (F3)', () => {
+    expect(() => loadConfig(fixtureEnv({ ANB_COOKIE_FILE: './cookies.json' }))).toThrowError(
+      /got: '\.\/cookies\.json'/,
+    );
+  });
 });
 
 describe('loadConfig — 경계값', () => {
@@ -64,5 +70,11 @@ describe('loadConfig — 경계값', () => {
     const config = loadConfig(fixtureEnv({ ANB_DATA_DIR: '~/anb-data' }));
     expect(path.isAbsolute(config.dataDir)).toBe(true);
     expect(config.dataDir).not.toContain('~');
+  });
+
+  test('ANB_COOKIE_FILE=~/anb-cookies.json 도 확장되어 절대경로로 통과한다 (F3)', () => {
+    const config = loadConfig(fixtureEnv({ ANB_COOKIE_FILE: '~/anb-cookies.json' }));
+    expect(path.isAbsolute(config.cookieFile)).toBe(true);
+    expect(config.cookieFile).not.toContain('~');
   });
 });

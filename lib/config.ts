@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,20 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.dirname(moduleDir);
 
+// F2: repoRoot is derived from import.meta.url, which would silently point inside a
+// bundled output dir (e.g. .next/server/...) if a future bundler ever relocates this
+// module. Fail loudly at startup instead of writing data under the wrong root.
+function assertRepoRootSane(): void {
+  const marker = path.join(repoRoot, 'package.json');
+  if (!existsSync(marker)) {
+    throw new Error(
+      `Could not confirm repoRoot: no package.json found at '${repoRoot}' ` +
+        `(derived from the config module's location, expected '${marker}'). ` +
+        'Set ANB_DATA_DIR (and ANB_COOKIE_FILE, if used) to an explicit absolute path to bypass repo-root inference.',
+    );
+  }
+}
+
 // D5a: 원시값 → `~` 확장 → 절대경로 검사 → 아니면 throw (에러 메시지에는 원시값 그대로)
 function resolvePathValue(raw: string, envVarName: string): string {
   const expanded = raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw;
@@ -35,6 +50,8 @@ function parsePositiveIntMs(raw: string, envVarName: string): number {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  assertRepoRootSane();
+
   const defaultDataDir = path.join(repoRoot, 'data');
   const dataDir = resolvePathValue(env.ANB_DATA_DIR ?? defaultDataDir, 'ANB_DATA_DIR');
 
