@@ -73,4 +73,7 @@ function registerShutdownHandlers(): void {
 export async function registerNode(): Promise<void> {
   setServices(createServices(loadConfig()));
   registerShutdownHandlers();
+  // 이 훅이 실제로 돌았는지가 "잡이 영영 created 에 머문다" 류 증상의 첫 갈림길이다 —
+  // 로그 한 줄로 부팅 시점에 확인할 수 있게 남긴다.
+  console.log('[instrumentation] services injected (pid=' + process.pid + ')');
 }

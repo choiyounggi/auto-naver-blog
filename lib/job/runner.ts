@@ -11,7 +11,27 @@ async function failJob(store: JobStore, jobId: string, step: string, err: unknow
 // D14: awaiting_approval에서 반드시 반환하고 publisher.publish()를 부르지 않는다.
 // 발행은 approveAndPublish()에서만 시작된다 — 이게 안전 계약의 기계적 표현이다.
 export async function runJob(store: JobStore, jobId: string): Promise<void> {
-  const { generator, publisher } = getServices();
+  // 이 함수는 백그라운드로 불린다(POST /api/jobs 는 기다리지 않는다). 여기서 그냥 던지면
+  // 잡 상태가 'created' 에 남아 화면은 영영 '진행 중'으로 보인다 — 어떤 실패든 잡에 기록한다.
+  try {
+    await runJobSteps(store, jobId);
+  } catch (err) {
+    await failJob(store, jobId, 'unexpected', err).catch((patchErr: unknown) => {
+      console.error(`runJob: 실패 기록조차 실패했습니다 (job '${jobId}'):`, patchErr);
+    });
+  }
+}
+
+async function runJobSteps(store: JobStore, jobId: string): Promise<void> {
+  // 서비스 주입이 안 됐으면 여기서 바로 끝난다 — 부팅 훅이 돌지 않았다는 뜻이다.
+  let services;
+  try {
+    services = getServices();
+  } catch (err) {
+    await failJob(store, jobId, 'bootstrap', err);
+    return;
+  }
+  const { generator, publisher } = services;
   const onProgress = (message: string) => {
     // fire-and-forget: never let a log-append failure surface as an unhandled rejection
     store.appendLog(jobId, message).catch((err: unknown) => {

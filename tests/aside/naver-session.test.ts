@@ -20,6 +20,7 @@ function fail(error: string): AsideEvalResult {
 }
 
 interface FakeReplResponses {
+  ensurePage?: AsideEvalResult;
   getCookies?: AsideEvalResult;
   setCookies?: AsideEvalResult;
   statusCheck?: AsideEvalResult;
@@ -30,6 +31,10 @@ function fakeRepl(responses: FakeReplResponses = {}): AsideReplApi {
     async start() {},
     async dispose() {},
     async evaluate(js: string): Promise<AsideEvalResult> {
+      // 모든 진입점이 먼저 부르는 "탭 보장" 스텝
+      if (js.includes('openTab')) {
+        return responses.ensurePage ?? ok('{"ok":true}');
+      }
       if (js.includes('Storage.getCookies')) {
         return responses.getCookies ?? ok('{"cookies":[]}');
       }
@@ -209,6 +214,88 @@ describe('status — 정상/에러', () => {
     const repl = fakeRepl({ statusCheck: fail('네비게이션 실패') });
     const session = new NaverSession(repl, fixtureConfig(cookieFile));
     const status = await session.status();
+    expect(status.loggedIn).toBe(false);
+    if (!status.loggedIn) expect(status.reason).toBe('unknown');
+  });
+});
+
+// 실측 회귀(2026-08-25): 새로 시작한 aside repl 세션은 page 가 null 이라 page.cdp.send() 가
+// 즉시 TypeError 로 죽었다. status() 는 그것을 reason:'unknown' 으로만 보고해서 화면에는
+// "네이버 로그인이 되어 있지 않습니다" 로 보였다 — 실제로는 로그인돼 있었다.
+describe('탭 보장(ensurePage)', () => {
+  test('정상: exportCookies 는 쿠키를 읽기 전에 탭을 보장한다', async () => {
+    const seen: string[] = [];
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate(js: string) {
+        seen.push(js.includes('openTab') ? 'ensurePage' : 'getCookies');
+        return ok('{"cookies":[]}');
+      },
+    };
+
+    await new NaverSession(repl, fixtureConfig(cookieFile)).exportCookies();
+
+    expect(seen[0]).toBe('ensurePage');
+    expect(seen).toContain('getCookies');
+  });
+
+  test('정상: status 는 로그인 판정 전에 탭을 보장한다', async () => {
+    await mkdir(path.dirname(cookieFile), { recursive: true });
+    await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([naverCookie1]), 'utf8');
+
+    const seen: string[] = [];
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate(js: string) {
+        if (js.includes('openTab')) {
+          seen.push('ensurePage');
+          return ok('{"ok":true}');
+        }
+        if (js.includes('Storage.setCookies')) {
+          seen.push('setCookies');
+          return ok('{"restored":1}');
+        }
+        seen.push('statusCheck');
+        return ok('{"url":"https://blog.naver.com/dev_king"}');
+      },
+    };
+
+    const status = await new NaverSession(repl, fixtureConfig(cookieFile)).status();
+
+    expect(status.loggedIn).toBe(true);
+    expect(seen[0]).toBe('ensurePage');
+    expect(seen.indexOf('statusCheck')).toBeGreaterThan(seen.indexOf('ensurePage'));
+  });
+
+  test('에러: 탭을 만들지 못하면 exportCookies 가 사유를 담아 던진다', async () => {
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate() {
+        return fail('브라우저 죽음');
+      },
+    };
+
+    await expect(new NaverSession(repl, fixtureConfig(cookieFile)).exportCookies()).rejects.toThrow(
+      '브라우저 죽음',
+    );
+  });
+
+  test('경계값: 탭을 만들지 못하면 status 는 reason:"unknown" 이다', async () => {
+    await mkdir(path.dirname(cookieFile), { recursive: true });
+    await (await import('node:fs/promises')).writeFile(cookieFile, JSON.stringify([]), 'utf8');
+
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate() {
+        return fail('브라우저 죽음');
+      },
+    };
+
+    const status = await new NaverSession(repl, fixtureConfig(cookieFile)).status();
     expect(status.loggedIn).toBe(false);
     if (!status.loggedIn) expect(status.reason).toBe('unknown');
   });

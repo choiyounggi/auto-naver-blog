@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "naver:login": "node scripts/naver-login.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "e2e:editor": "node scripts/e2e-editor.mjs"
   },
   "dependencies": {
     "next": "16.3.2",

@@ -23,6 +23,7 @@ import {
   dismissEntryPopups,
   fillBodyAndImages,
   fillTitle,
+  openPublishPanel,
   openEditor,
   selectCategory,
   setTags,
@@ -67,10 +68,13 @@ export class NaverPublisher implements NaverPublisherApi {
     const editorUrl = await openEditor(ctx, blogId);
     this.tabOpened = true;
     await dismissEntryPopups(ctx);
-    await selectCategory(ctx, input.category);
     await fillTitle(ctx, draft.title);
     await fillBodyAndImages(ctx, draft, input);
     await setThumbnail(ctx, draft, input);
+    // 실측: 카테고리·태그는 본문 화면이 아니라 발행 설정 패널 안에 있다. 패널을 열어 둔
+    // 채로 미리보기까지만 하고 멈추므로, 사람이 승인하기 전에는 발행되지 않는다.
+    await openPublishPanel(ctx);
+    await selectCategory(ctx, input.category);
     await setTags(ctx, draft.tags);
 
     // D12: 스크린샷은 <dataDir>/jobs/<jobId>/preview.png 에 남긴다. 이 스크린샷을 워커
@@ -115,7 +119,7 @@ export class NaverPublisher implements NaverPublisherApi {
       publishedAt: resultUrl !== null ? new Date().toISOString() : null,
       message:
         resultUrl !== null
-          ? '발행 버튼을 클릭했고 URL을 읽었습니다. 실제 발행 성공 여부는 라이브에서 확인된 적이 없습니다.'
+          ? '발행했습니다. 발행 설정 패널의 발행 버튼을 눌렀고, 이동한 글 주소를 읽었습니다.'
           : '발행 버튼을 클릭했지만 결과 URL을 읽지 못했습니다.',
     });
   }

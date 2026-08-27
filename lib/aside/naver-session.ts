@@ -14,6 +14,21 @@ function isNaverDomain(domain: unknown): boolean {
 }
 
 // D5: 관찰된 응답 경로(`{ cookies: [...] }`)만 신뢰한다. 다른 필드는 추측하지 않는다.
+// 실측(2026-08-25): 새로 시작한 aside repl 세션에서는 `page` 가 null 이다. 탭을 한 번도
+// 연 적이 없기 때문인데, 그 상태에서 page.cdp.send() 를 부르면 즉시 TypeError 로 죽는다 —
+// status() 는 그걸 reason:'unknown' 으로만 보고해서 "로그인이 되어 있지 않습니다" 처럼
+// 보였다. 쿠키·페이지를 건드리기 전에 항상 탭이 하나는 있게 만든다.
+// about:blank 로 여는 이유: Storage 도메인은 브라우저 전역이라 어떤 페이지에서도 쿠키를
+// 읽고 쓸 수 있고(실측 153개), 실제 사이트를 열어 시간을 쓸 이유가 없기 때문이다.
+const ENSURE_PAGE_JS = `
+await (async () => {
+  if (page === null || page === undefined) {
+    await openTab('about:blank');
+  }
+  console.log(JSON.stringify({ ok: true }));
+})();
+`;
+
 const EXPORT_COOKIES_JS = `
 await (async () => {
   const result = await page.cdp.send('Storage.getCookies');
@@ -58,7 +73,16 @@ export class NaverSession implements NaverSessionApi {
     this.config = config;
   }
 
+  // 페이지가 없으면 만든다. 쿠키·네비게이션을 건드리는 모든 진입점이 먼저 부른다.
+  private async ensurePage(): Promise<void> {
+    const result = await this.repl.evaluate(ENSURE_PAGE_JS);
+    if (!result.ok) {
+      throw new Error(`브라우저 탭을 준비하지 못했습니다: ${result.error ?? 'unknown error'}`);
+    }
+  }
+
   async exportCookies(): Promise<number> {
+    await this.ensurePage();
     const result = await this.repl.evaluate(EXPORT_COOKIES_JS);
     if (!result.ok) {
       throw new Error(`쿠키를 가져오지 못함: ${result.error ?? 'unknown error'}`);
@@ -101,6 +125,7 @@ export class NaverSession implements NaverSessionApi {
       return 0;
     }
 
+    await this.ensurePage();
     const result = await this.repl.evaluate(buildImportCookiesJs(cookies));
     if (!result.ok) {
       throw new Error(`쿠키를 복원하지 못함: ${result.error ?? 'unknown error'}`);
@@ -118,6 +143,13 @@ export class NaverSession implements NaverSessionApi {
 
     try {
       await this.importCookies();
+    } catch {
+      return { loggedIn: false, reason: 'unknown', checkedAt };
+    }
+
+    // importCookies 가 (빈 쿠키 파일 등으로) 일찍 반환했을 수 있으므로 여기서도 보장한다.
+    try {
+      await this.ensurePage();
     } catch {
       return { loggedIn: false, reason: 'unknown', checkedAt };
     }

@@ -55,6 +55,22 @@ beforeEach(async () => {
   resetJobStore();
 });
 
+// POST /api/jobs 는 runJob() 을 기다리지 않고 201 을 돌려준다(설계). 그 백그라운드 잡이
+// 테스트가 끝난 뒤에도 잡 상태 파일을 쓰기 때문에, 곧바로 지우면 rm 과 경합해 ENOTEMPTY 가
+// 난다 — 쓰기가 멎을 때까지 짧게 재시도한다.
+async function rmAfterBackgroundWrites(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw err;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  await rm(dir, { recursive: true, force: true });
+}
+
 afterEach(async () => {
   resetJobStore();
   if (originalDataDir === undefined) {
@@ -62,7 +78,7 @@ afterEach(async () => {
   } else {
     process.env.ANB_DATA_DIR = originalDataDir;
   }
-  await rm(dataDir, { recursive: true, force: true });
+  await rmAfterBackgroundWrites(dataDir);
 });
 
 describe('POST /api/jobs', () => {

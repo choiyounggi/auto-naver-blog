@@ -219,9 +219,46 @@ describe('runJob — 에러 처리', () => {
   });
 });
 
+// 실측 회귀(2026-08-25): 서비스가 주입되지 않은 상태에서 runJob 이 그냥 던지면, 잡은
+// 'created' 에 남고 화면은 영영 '진행 중'으로 보였다. 어떤 실패든 잡 상태에 남아야 한다.
+describe('runJob — 부팅 실패도 잡에 기록한다', () => {
+  test('에러: 서비스 미주입이면 phase 가 failed 이고 step 이 bootstrap 이다', async () => {
+    const jobId = 'job-bootstrap';
+    await store.create(makeInput(jobId));
+    resetServices();
+
+    await expect(runJob(store, jobId)).resolves.toBeUndefined();
+
+    const state = await store.get(jobId);
+    expect(state?.phase).toBe('failed');
+    expect(state?.error?.step).toBe('bootstrap');
+    expect(state?.error?.message).toMatch(/setServices/i);
+  });
+
+  test('에러: runJob 은 어떤 경우에도 reject 하지 않는다 (백그라운드 호출이므로)', async () => {
+    const jobId = 'job-no-reject';
+    await store.create(makeInput(jobId));
+    resetServices();
+
+    // reject 하면 라우트의 .catch 가 콘솔에만 찍고 끝나 화면에는 아무것도 안 뜬다.
+    await expect(runJob(store, jobId)).resolves.toBeUndefined();
+  });
+
+  test('경계값: 존재하지 않는 잡에 대해서도 던지지 않는다', async () => {
+    resetServices();
+    await expect(runJob(store, 'no-such-job')).resolves.toBeUndefined();
+  });
+});
+
 describe('getServices', () => {
   test('에러: getServices()가 미주입 상태에서 명확한 메시지로 throw한다', () => {
     resetServices();
     expect(() => getServices()).toThrow(/setServices/i);
+  });
+
+  test('정상: setServices 로 넣은 값을 그대로 돌려준다 (모듈 인스턴스가 갈려도 유지되도록 globalThis 보관)', () => {
+    const services = { generator, publisher };
+    setServices(services);
+    expect(getServices()).toBe(services);
   });
 });

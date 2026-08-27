@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { AppConfig } from '@/lib/config';
 import { CategoryNotFoundError } from '@/lib/naver/errors';
 import { NaverPublisher } from '@/lib/naver/publisher';
@@ -17,6 +17,23 @@ import type {
 import { FakeAsideReplApi, okResult } from './fake-repl';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// 보안 정책: /tmp·$TMPDIR 대신 프로젝트 내부(gitignore 된 .vitest-tmp)에만 파일을 만든다
+const scratchDir = path.join(here, '..', '..', '.vitest-tmp', 'naver-publisher-tests');
+// steps.ts 는 실제로 파일을 다룬다(업로드 스테이징·스크린샷 복사) — 가짜 REPL 이
+// 세션 디렉터리라고 답할 실제 디렉터리와, 그 안의 스크린샷 파일을 미리 만들어 둔다.
+const sessionDir = path.join(scratchDir, 'aside-session');
+
+beforeEach(async () => {
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(sessionDir, 'anb-preview.png'), 'fake-png', 'utf8');
+  for (let i = 1; i <= 3; i++) {
+    await writeFile(path.join(scratchDir, `photo-${i}.jpg`), 'fake-jpg', 'utf8');
+  }
+});
+
+afterEach(async () => {
+  await rm(scratchDir, { recursive: true, force: true });
+});
 
 async function loadEditorReadyTree(): Promise<string> {
   return readFile(path.join(here, 'fixtures', 'editor-ready.snapshot.txt'), 'utf8');
@@ -24,11 +41,11 @@ async function loadEditorReadyTree(): Promise<string> {
 
 function makeConfig(): AppConfig {
   return {
-    dataDir: path.join(here, '..', '..', '.vitest-tmp', 'naver-publisher-tests'),
+    dataDir: scratchDir,
     claudeBin: 'claude',
     asideBin: 'aside',
     naverBlogId: null,
-    cookieFile: path.join(here, '..', '..', '.vitest-tmp', 'naver-publisher-tests', 'cookies.json'),
+    cookieFile: path.join(scratchDir, 'cookies.json'),
     claudeTimeoutMs: 5000,
     asideStepTimeoutMs: 60000,
   };
@@ -59,7 +76,7 @@ function makeImage(n: number): UploadedImage {
   return {
     id: `img-${n}`,
     originalName: `photo-${n}.jpg`,
-    path: `/uploads/photo-${n}.jpg`,
+    path: path.join(scratchDir, `photo-${n}.jpg`),
     mimeType: 'image/jpeg',
     bytes: 1024,
     width: 800,
@@ -102,16 +119,34 @@ function makeDraft(imageCount: number): PostDraft {
  * 대신, 각 evaluate() 의 JS 내용으로 무엇을 기대하는지 판별해 알맞은 stdout 모양을
  * 돌려준다 — steps.ts 내부 리팩터에 깨지지 않도록 하기 위함이다.
  */
-function successRepl(editorReadyTree: string): FakeAsideReplApi {
+const AVAILABLE_CATEGORIES = ['여행', '일상'];
+
+/** selectCategory 가 주입한 target 문자열을 읽어, 실제 드롭다운처럼 인덱스를 돌려준다. */
+function categoryResult(js: string): AsideEvalResult {
+  const match = js.match(/const target = "([^"]*)";/);
+  const target = match ? match[1] : '';
+  return okResult(JSON.stringify({ names: AVAILABLE_CATEGORIES, index: AVAILABLE_CATEGORIES.indexOf(target) }));
+}
+
+function successRepl(editorReadyTree: string, publishUrl: string | null = 'https://blog.naver.com/tester/223000000001'): FakeAsideReplApi {
   return new FakeAsideReplApi((js): AsideEvalResult => {
     if (js.includes(PUBLISH_CLICK_MARKER)) {
-      return okResult(JSON.stringify({ url: 'https://blog.naver.com/tester/223000000001' }));
+      return okResult(JSON.stringify({ resultUrl: publishUrl }));
+    }
+    if (js.includes('dir: pwd')) {
+      return okResult(JSON.stringify({ dir: sessionDir }));
     }
     if (js.includes('se-popup-button-cancel') || js.includes('se-help-panel-close-button')) {
       return okResult(JSON.stringify({ dismissed: false }));
     }
+    if (js.includes('names.indexOf')) {
+      return categoryResult(js);
+    }
+    if (js.includes('panelOpen')) {
+      return okResult(JSON.stringify({ panelOpen: true }));
+    }
     if (js.includes('snapshot(page')) {
-      return okResult(JSON.stringify({ tree: editorReadyTree, url: 'https://blog.naver.com/tester?Redirect=Write' }));
+      return okResult(JSON.stringify({ hasEditorFrame: true, tree: editorReadyTree, url: 'https://blog.naver.com/tester?Redirect=Write' }));
     }
     if (js.includes('.count()')) {
       return okResult(JSON.stringify({ count: 1 }));
@@ -124,27 +159,6 @@ function publishClickCount(repl: FakeAsideReplApi): number {
   return repl.calls.filter((call) => call.js.includes(PUBLISH_CLICK_MARKER)).length;
 }
 
-/**
- * review r1 F1: successRepl 과 동일하되, 발행 버튼 클릭 evaluate 는 성공(ok:true)하지만
- * 결과 URL 을 읽지 못한 상황을 흉내낸다 — submitPublish 의 resultUrl 이 null 이 된다.
- */
-function successReplWithUnresolvedPublishUrl(editorReadyTree: string): FakeAsideReplApi {
-  return new FakeAsideReplApi((js): AsideEvalResult => {
-    if (js.includes(PUBLISH_CLICK_MARKER)) {
-      return okResult(JSON.stringify({ url: null }));
-    }
-    if (js.includes('se-popup-button-cancel') || js.includes('se-help-panel-close-button')) {
-      return okResult(JSON.stringify({ dismissed: false }));
-    }
-    if (js.includes('snapshot(page')) {
-      return okResult(JSON.stringify({ tree: editorReadyTree, url: 'https://blog.naver.com/tester?Redirect=Write' }));
-    }
-    if (js.includes('.count()')) {
-      return okResult(JSON.stringify({ count: 1 }));
-    }
-    return okResult(JSON.stringify({ ok: true }));
-  });
-}
 
 describe('NaverPublisher — 안전(D8: fillEditor 는 절대 발행하지 않는다)', () => {
   test('안전(핵심): fillEditor 성공 후 발행 클릭 횟수는 0이다', async () => {
@@ -255,7 +269,7 @@ describe('NaverPublisher — abort()', () => {
 
 describe('NaverPublisher — review r1 F1: publishedAt 은 postUrl 과 같은 규칙을 따른다', () => {
   test('에러: resultUrl 을 못 읽으면 ok===false 그리고 publishedAt===null 이다', async () => {
-    const repl = successReplWithUnresolvedPublishUrl(await loadEditorReadyTree());
+    const repl = successRepl(await loadEditorReadyTree(), null);
     const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
 
     await publisher.fillEditor(makeDraft(1), makeInput(1));

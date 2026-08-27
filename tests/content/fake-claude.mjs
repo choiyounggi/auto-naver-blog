@@ -29,6 +29,21 @@ switch (mode) {
     process.stdout.write('this is not json {{{');
     process.exit(0);
     break;
+  case 'argv':
+    // callClaude 가 실제로 조립한 argv 를 그대로 돌려준다 — 옵션 순서(특히 `--`)를
+    // 검사하기 위한 모드다. 성공 응답 형태를 그대로 지켜야 interpretResponse 를 통과한다.
+    process.stdout.write(
+      JSON.stringify({
+        is_error: false,
+        terminal_reason: 'completed',
+        permission_denials: [],
+        modelUsage: { 'fake-model': {} },
+        total_cost_usd: 0,
+        structured_output: { argv },
+      }),
+    );
+    process.exit(0);
+    break;
   case 'sleep':
     // Never exits on its own — exercises callClaude's timeout + kill path.
     setInterval(() => {}, 1000);

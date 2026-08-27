@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, test } from 'vitest';
 import type { AppConfig } from '@/lib/config';
-import { buildPrompt, ContentGenerator } from '@/lib/content/generator';
+import { POST_DRAFT_JSON_SCHEMA, buildPrompt, ContentGenerator } from '@/lib/content/generator';
 import type { PostInput, UploadedImage } from '@/lib/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -188,5 +188,24 @@ describe('buildPrompt — 장소 주입', () => {
     expect(prompt).toContain('맛집 뿌시기');
     expect(prompt).toContain('면이 좋았다');
     expect(prompt).not.toMatch(/\{\{[A-Z_]+\}\}/);
+  });
+});
+
+// 실측 회귀(2026-08-25): z.toJSONSchema() 가 붙이는 `$schema` 키 때문에 claude CLI 가
+// 스키마를 통째로 거부했다(exit=1, stdout 없음). 그 키가 다시 들어오면 여기서 잡힌다.
+describe('claude 에 넘기는 JSON 스키마', () => {
+  test('에러 방지: $schema 키를 넘기지 않는다', () => {
+    expect(POST_DRAFT_JSON_SCHEMA).not.toHaveProperty('$schema');
+  });
+
+  test('정상: 스키마 본문은 그대로 남아 있다', () => {
+    expect(POST_DRAFT_JSON_SCHEMA).toMatchObject({ type: 'object' });
+    expect(Object.keys((POST_DRAFT_JSON_SCHEMA as { properties: object }).properties)).toEqual(
+      expect.arrayContaining(['title', 'intro', 'blocks', 'outro', 'tags', 'thumbnailImageId']),
+    );
+  });
+
+  test('경계값: 중첩된 스키마 안에는 $schema 가 애초에 없다 (문자열 전체에 등장하지 않는다)', () => {
+    expect(JSON.stringify(POST_DRAFT_JSON_SCHEMA)).not.toContain('$schema');
   });
 });

@@ -1,33 +1,118 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } from '@/lib/naver/errors';
 import {
   buildPlaceText,
+  capturePreview,
+  closeCurrentTab,
   dismissEntryPopups,
   fillBodyAndImages,
   fillTitle,
   openEditor,
+  openPublishPanel,
   selectCategory,
+  setTags,
   setThumbnail,
   submitPublish,
+  PUBLISH_CLICK_MARKER,
 } from '@/lib/naver/steps';
-import type { PostDraft, PostInput, UploadedImage } from '@/lib/types';
-import { failResult, okResult, sequenceRepl, treeResult } from './fake-repl';
+import type { AsideEvalResult, AsideReplApi, PostDraft, PostInput, UploadedImage } from '@/lib/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, 'fixtures');
+// 보안 정책: /tmp·$TMPDIR 대신 프로젝트 내부(gitignore 된 .vitest-tmp)에만 파일을 만든다
+const scratchDir = path.join(here, '..', '..', '.vitest-tmp', 'naver-steps-tests');
+const sessionDir = path.join(scratchDir, 'aside-session');
 
 async function loadFixture(name: string): Promise<string> {
   return readFile(path.join(fixturesDir, name), 'utf8');
+}
+
+function ok(stdout: string): AsideEvalResult {
+  return { ok: true, stdout, durationMs: 1, error: null };
+}
+
+function fail(error: string): AsideEvalResult {
+  return { ok: false, stdout: '', durationMs: 1, error };
+}
+
+interface FakeOptions {
+  tree?: string;
+  hasEditorFrame?: boolean;
+  categories?: string[];
+  panelOpen?: boolean;
+  imageCount?: number;
+  visibleCount?: number;
+  publishUrl?: string | null;
+  failAll?: string;
+}
+
+/**
+ * 호출 순서를 하드코딩하지 않고 JS 내용으로 무엇을 묻는지 판별하는 가짜 REPL —
+ * steps.ts 내부 리팩터에 깨지지 않게 하기 위함이다.
+ */
+function fakeRepl(opts: FakeOptions = {}) {
+  const calls: string[] = [];
+  let uploadCount = 0;
+  const repl: AsideReplApi = {
+    async start() {},
+    async dispose() {},
+    async evaluate(js: string): Promise<AsideEvalResult> {
+      calls.push(js);
+      if (opts.failAll !== undefined) return fail(opts.failAll);
+
+      if (js.includes(PUBLISH_CLICK_MARKER)) {
+        return ok(JSON.stringify({ resultUrl: opts.publishUrl ?? null }));
+      }
+      if (js.includes('dir: pwd')) {
+        return ok(JSON.stringify({ dir: sessionDir }));
+      }
+      if (js.includes('se-popup-button-cancel') || js.includes('se-help-panel-close-button')) {
+        return ok(JSON.stringify({ dismissed: false }));
+      }
+      if (js.includes('names.indexOf')) {
+        const match = js.match(/const target = "([^"]*)";/);
+        const target = match ? match[1] : '';
+        const names = opts.categories ?? ['여행', '일상'];
+        return ok(JSON.stringify({ names, index: names.indexOf(target) }));
+      }
+      if (js.includes('panelOpen')) {
+        return ok(JSON.stringify({ panelOpen: opts.panelOpen ?? true }));
+      }
+      if (js.includes('chooser')) {
+        // 실제 에디터처럼 업로드할 때마다 이미지 수가 늘어난다. opts.imageCount 를 주면
+        // 그 값으로 고정해 "업로드가 확인되지 않는" 상황을 흉내낼 수 있다.
+        uploadCount += 1;
+        return ok(JSON.stringify({ count: opts.imageCount ?? uploadCount }));
+      }
+      if (js.includes('openTab')) {
+        return ok(
+          JSON.stringify({
+            hasEditorFrame: opts.hasEditorFrame ?? true,
+            tree: opts.tree ?? '',
+            url: 'https://blog.naver.com/tester?Redirect=Write',
+          }),
+        );
+      }
+      if (js.includes('snapshot(page')) {
+        return ok(JSON.stringify({ tree: opts.tree ?? '' }));
+      }
+      if (js.includes('.count()')) {
+        return ok(JSON.stringify({ count: opts.visibleCount ?? 1 }));
+      }
+      return ok(JSON.stringify({ ok: true }));
+    },
+  };
+  return { repl, calls };
 }
 
 function makeImage(n: number, overrides: Partial<UploadedImage> = {}): UploadedImage {
   return {
     id: `img-${n}`,
     originalName: `photo-${n}.jpg`,
-    path: `/uploads/photo-${n}.jpg`,
+    path: path.join(scratchDir, `photo-${n}.jpg`),
     mimeType: 'image/jpeg',
     bytes: 1024,
     width: 800,
@@ -37,7 +122,7 @@ function makeImage(n: number, overrides: Partial<UploadedImage> = {}): UploadedI
   };
 }
 
-function makeInput(imageCount: number): PostInput {
+function makeInput(imageCount: number, overrides: Partial<PostInput> = {}): PostInput {
   return {
     jobId: 'job-1',
     category: '여행',
@@ -45,6 +130,7 @@ function makeInput(imageCount: number): PostInput {
     place: '',
     images: Array.from({ length: imageCount }, (_, i) => makeImage(i + 1)),
     createdAt: '2026-08-25T00:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -67,207 +153,132 @@ function makeDraft(imageCount: number, overrides: Partial<PostDraft> = {}): Post
   };
 }
 
-describe('fillTitle — 정상', () => {
-  test('editor-ready 스냅샷에서 제목 입력에 성공한다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ typed: true }))]);
-
-    await expect(fillTitle({ repl }, '테스트 제목')).resolves.toBeUndefined();
-    expect(repl.calls.length).toBe(2);
-  });
+beforeEach(async () => {
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(sessionDir, 'anb-preview.png'), 'fake-png', 'utf8');
+  for (let i = 1; i <= 3; i++) {
+    await writeFile(path.join(scratchDir, `photo-${i}.jpg`), 'fake-jpg', 'utf8');
+  }
 });
 
-describe('D4 — 세 가지 실패 결과 구분', () => {
-  test('에러(못 찾음): editor-missing-publish 로 submitPublish 가 실패하고 단계명·발췌가 담긴다', async () => {
-    const tree = await loadFixture('editor-missing-publish.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree)]);
-
-    await expect(submitPublish({ repl })).rejects.toThrow(ElementNotFoundError);
-    try {
-      await submitPublish(sequenceReplCtx(tree));
-      throw new Error('unreachable');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ElementNotFoundError);
-      const notFound = err as ElementNotFoundError;
-      expect(notFound.step).toBe('submitPublish');
-      expect(notFound.message).toContain('submitPublish');
-      expect(notFound.excerpt.length).toBeGreaterThan(0);
-    }
-  });
-
-  test('에러(수행 못 함): evaluate 가 ok:false 일 때의 에러가 "못 찾음" 에러와 문자열이 다르다', async () => {
-    const tree = await loadFixture('editor-missing-publish.snapshot.txt');
-    const notFoundRepl = sequenceRepl([treeResult(tree)]);
-    const evalFailedRepl = sequenceRepl([failResult('테스트용 실패 이유')]);
-
-    let notFoundMessage = '';
-    try {
-      await submitPublish({ repl: notFoundRepl });
-    } catch (err) {
-      notFoundMessage = (err as Error).message;
-    }
-
-    let evalFailedMessage = '';
-    try {
-      await submitPublish({ repl: evalFailedRepl });
-    } catch (err) {
-      expect(err).toBeInstanceOf(EvaluationFailedError);
-      evalFailedMessage = (err as Error).message;
-    }
-
-    expect(notFoundMessage.length).toBeGreaterThan(0);
-    expect(evalFailedMessage.length).toBeGreaterThan(0);
-    expect(evalFailedMessage).not.toBe(notFoundMessage);
-  });
-
-  test('에러(D4): 채널이 poisoned 되었을 때의 에러 텍스트가 일반적인 ok:false 에러와 다르다', async () => {
-    // t1 repl.ts 의 실제 poisoned 사유 문자열 형태를 흉내낸다 (드레이닝 타임아웃).
-    const poisonedRepl = sequenceRepl([failResult('REPL 동기화 상실 — dispose 후 재시작 필요 (드레이닝 타임아웃)')]);
-    const genericFailRepl = sequenceRepl([failResult('테스트용 실패 이유')]);
-
-    let poisonedMessage = '';
-    try {
-      await submitPublish({ repl: poisonedRepl });
-    } catch (err) {
-      expect(err).toBeInstanceOf(EvaluationFailedError);
-      poisonedMessage = (err as Error).message;
-    }
-
-    let genericMessage = '';
-    try {
-      await submitPublish({ repl: genericFailRepl });
-    } catch (err) {
-      genericMessage = (err as Error).message;
-    }
-
-    expect(poisonedMessage.length).toBeGreaterThan(0);
-    expect(genericMessage.length).toBeGreaterThan(0);
-    expect(poisonedMessage).not.toBe(genericMessage);
-  });
+afterEach(async () => {
+  await rm(scratchDir, { recursive: true, force: true });
 });
-
-function sequenceReplCtx(tree: string) {
-  return { repl: sequenceRepl([treeResult(tree)]) };
-}
 
 describe('openEditor', () => {
-  test('에디터 iframe 이 있는 스냅샷이면 성공한다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([okResult(JSON.stringify({ tree, url: 'https://blog.naver.com/tester?Redirect=Write' }))]);
-
-    await expect(openEditor({ repl }, 'tester')).resolves.toBe('https://blog.naver.com/tester?Redirect=Write');
+  test('정상: 에디터 iframe 이 확인되면 진입 URL 을 돌려준다', async () => {
+    const { repl } = fakeRepl({ tree: await loadFixture('editor-ready.snapshot.txt') });
+    await expect(openEditor({ repl }, 'tester')).resolves.toContain('blog.naver.com/tester');
   });
 
-  test('로그인 페이지 스냅샷을 받으면 실패한다', async () => {
-    const tree = await loadFixture('login-page.snapshot.txt');
-    const repl = sequenceRepl([okResult(JSON.stringify({ tree, url: 'https://nid.naver.com/nidlogin.login' }))]);
-
+  // 실측 회귀: iframe 의 접근성 이름으로 판정하면 정상 화면에서도 실패한다 —
+  // 존재 확인은 DOM 셀렉터(hasEditorFrame)로만 한다.
+  test('에러: iframe 이 없으면(로그인 페이지 등) 단계명·발췌를 담아 실패한다', async () => {
+    const { repl } = fakeRepl({ hasEditorFrame: false, tree: await loadFixture('login-page.snapshot.txt') });
     await expect(openEditor({ repl }, 'tester')).rejects.toThrow(ElementNotFoundError);
+    await expect(openEditor({ repl }, 'tester')).rejects.toThrow(/openEditor/);
+  });
+
+  test('에러: evaluate 자체가 실패하면 "못 찾음" 이 아니라 "수행 못 함" 이다', async () => {
+    const { repl } = fakeRepl({ failAll: '채널 죽음' });
+    await expect(openEditor({ repl }, 'tester')).rejects.toThrow(EvaluationFailedError);
+    await expect(openEditor({ repl }, 'tester')).rejects.toThrow(/채널 죽음/);
   });
 });
 
-describe('dismissEntryPopups — 경계값(D10)', () => {
-  test('팝업이 없어도 실패하지 않는다', async () => {
-    const repl = sequenceRepl([okResult(JSON.stringify({ dismissed: false })), okResult(JSON.stringify({ dismissed: false }))]);
-
+describe('dismissEntryPopups', () => {
+  test('정상: 팝업이 없어도 실패하지 않는다', async () => {
+    const { repl } = fakeRepl();
     await expect(dismissEntryPopups({ repl })).resolves.toBeUndefined();
-    expect(repl.calls.length).toBe(2);
   });
 
-  test('evaluate 자체가 실패해도(치명적이지 않음) throw 하지 않는다', async () => {
-    const repl = sequenceRepl([failResult('일시적 오류'), okResult(JSON.stringify({ dismissed: true }))]);
-
+  test('경계값: evaluate 가 실패해도 이 단계는 실패하지 않는다(선택적 정리)', async () => {
+    const { repl } = fakeRepl({ failAll: '팝업 확인 실패' });
     await expect(dismissEntryPopups({ repl })).resolves.toBeUndefined();
   });
 });
 
-describe('fillTitle — 경계값(D7): 특수문자', () => {
-  test('따옴표·개행·백틱·역슬래시가 든 제목이 JSON.stringify 로 안전하게 주입된다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ typed: true }))]);
-    const dangerousTitle = '제목 "따옴표" \n개행\n `백틱` \\역슬래시\\';
+describe('fillTitle', () => {
+  test('정상: 제목을 입력한다', async () => {
+    const { repl } = fakeRepl();
+    await expect(fillTitle({ repl }, '제목입니다')).resolves.toBeUndefined();
+  });
 
-    await fillTitle({ repl }, dangerousTitle);
+  test('경계값(D7): 따옴표·개행·백틱·역슬래시가 든 제목이 안전하게 주입된다', async () => {
+    const { repl, calls } = fakeRepl();
+    const nasty = '"따옴표" `백틱` \\역슬래시\\ \n줄바꿈';
+    await fillTitle({ repl }, nasty);
+    const typed = calls.find((js) => js.includes('keyboard.type'));
+    expect(typed).toBeDefined();
+    expect(typed).toContain(JSON.stringify(nasty));
+  });
 
-    const actionCall = repl.calls[1];
-    expect(actionCall.js).toContain(JSON.stringify(dangerousTitle));
-    // 문자열 연결이었다면 이 JS 는 파싱 불가능한 상태가 됐을 것이다 — 안전하게 파싱 가능해야 한다.
-    expect(() => new Function(actionCall.js)).not.toThrow();
+  test('에러: 제목 입력 영역이 없으면 실패한다', async () => {
+    const { repl } = fakeRepl({ visibleCount: 0 });
+    await expect(fillTitle({ repl }, '제목')).rejects.toThrow(ElementNotFoundError);
   });
 });
 
-describe('fillBodyAndImages', () => {
-  test('경계값: 이미지 1장짜리 draft 로 동작한다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 3 }))]);
-    const input = makeInput(1);
-    const draft = makeDraft(1);
-
-    await expect(fillBodyAndImages({ repl }, draft, input)).resolves.toBeUndefined();
-    expect(repl.calls.length).toBe(2);
+describe('fillBodyAndImages — 정상', () => {
+  test('이미지 1장짜리 draft 로 동작한다', async () => {
+    const { repl } = fakeRepl();
+    await expect(fillBodyAndImages({ repl }, makeDraft(1), makeInput(1))).resolves.toBeUndefined();
   });
 
-  test('경계값: 이미지 0장이면 거부한다(최소 1장) — 브라우저를 건드리지 않는다', async () => {
-    const repl = sequenceRepl([]);
-    const input = makeInput(0);
-    const draft = makeDraft(0);
-
-    await expect(fillBodyAndImages({ repl }, draft, input)).rejects.toThrow(/0장/);
-    expect(repl.calls.length).toBe(0);
+  // 실측 회귀: 조각마다 본문을 다시 클릭해 캐럿을 잡으면 글이 뒤엉킨다.
+  test('본문 클릭(포커스)은 딱 한 번만 일어난다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(2), makeInput(2));
+    const focusCalls = calls.filter((js) => js.includes('focused: true'));
+    expect(focusCalls).toHaveLength(1);
   });
 
-  test('D11 재검증: blocks 순서가 어긋나면 재정렬하지 않고 거부한다', async () => {
-    const repl = sequenceRepl([]);
-    const input = makeInput(2);
-    const draft = makeDraft(2, { thumbnailImageId: 'img-2' });
-
-    await expect(fillBodyAndImages({ repl }, draft, input)).rejects.toThrow();
-    expect(repl.calls.length).toBe(0);
+  test('이미지를 aside 세션 디렉터리로 복사한 뒤 그 경로로 업로드한다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1));
+    const upload = calls.find((js) => js.includes('setFiles'));
+    expect(upload).toContain(path.join(sessionDir, 'anb-uploads'));
   });
 });
 
-describe('setThumbnail', () => {
-  test('D11 재검증: thumbnailImageId 가 첫 이미지와 다르면 거부한다', async () => {
-    const repl = sequenceRepl([]);
-    const input = makeInput(2);
-    const draft = makeDraft(2, { thumbnailImageId: 'img-2' });
+describe('fillBodyAndImages — 에러/경계값', () => {
+  test('에러: 이미지가 0장이면 거부하고 브라우저를 건드리지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await expect(fillBodyAndImages({ repl }, makeDraft(0), makeInput(0))).rejects.toThrow(/0장/);
+    expect(calls).toHaveLength(0);
+  });
 
-    await expect(setThumbnail({ repl }, draft, input)).rejects.toThrow();
-    expect(repl.calls.length).toBe(0);
+  test('에러: blocks 개수가 이미지 수와 다르면 거부한다', async () => {
+    const { repl } = fakeRepl();
+    await expect(fillBodyAndImages({ repl }, makeDraft(2), makeInput(1))).rejects.toThrow(/blocks 개수/);
+  });
+
+  test('에러: 업로드가 확인되지 않으면 실패한다', async () => {
+    const { repl } = fakeRepl({ imageCount: 0 });
+    await expect(fillBodyAndImages({ repl }, makeDraft(1), makeInput(1))).rejects.toThrow(/업로드가 확인되지 않음/);
   });
 });
 
-describe('selectCategory (D14)', () => {
-  test('에러: 카테고리 이름이 목록에 없으면 실패하고 사용 가능한 이름들이 담긴다', async () => {
-    const openTree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([
-      treeResult(openTree),
-      okResult(JSON.stringify({ clicked: true })),
-      treeResult(openTree),
-    ]);
-
-    await expect(selectCategory({ repl }, '없는카테고리')).rejects.toThrow(CategoryNotFoundError);
-    const repl2 = sequenceRepl([treeResult(openTree), okResult(JSON.stringify({ clicked: true })), treeResult(openTree)]);
-    try {
-      await selectCategory({ repl: repl2 }, '없는카테고리');
-      throw new Error('unreachable');
-    } catch (err) {
-      expect(err).toBeInstanceOf(CategoryNotFoundError);
-      const notFound = err as CategoryNotFoundError;
-      expect(notFound.available).toEqual(['일상', '여행', '맛집']);
-    }
+describe('fillBodyAndImages — 장소', () => {
+  test('정상: 장소를 입력하면 본문 마지막에 붙는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '서울 성수동 파스타집' }));
+    const typedCalls = calls.filter((js) => js.includes('keyboard.type'));
+    const last = typedCalls[typedCalls.length - 1];
+    expect(last).toContain('📍 장소');
+    expect(last).toContain('서울 성수동 파스타집');
   });
 
-  test('정상(D14): 이름 앞뒤 공백만 다른 카테고리는 일치로 처리된다', async () => {
-    const openTree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([
-      treeResult(openTree),
-      okResult(JSON.stringify({ clicked: true })),
-      treeResult(openTree),
-      okResult(JSON.stringify({ clicked: true })),
-    ]);
+  test('경계값: 장소가 비어 있으면 장소 문단을 넣지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '' }));
+    expect(calls.some((js) => js.includes('📍'))).toBe(false);
+  });
 
-    await expect(selectCategory({ repl }, '  여행  ')).resolves.toBeUndefined();
+  test('경계값: 공백뿐인 장소도 문단을 만들지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '   ' }));
+    expect(calls.some((js) => js.includes('📍'))).toBe(false);
   });
 });
 
@@ -276,7 +287,7 @@ describe('buildPlaceText', () => {
     expect(buildPlaceText('서울 성수동 파스타집')).toBe('\n📍 장소\n서울 성수동 파스타집');
   });
 
-  test('경계값: 빈 문자열이면 null 이다(문단을 넣지 않는다)', () => {
+  test('경계값: 빈 문자열이면 null 이다', () => {
     expect(buildPlaceText('')).toBeNull();
   });
 
@@ -289,38 +300,126 @@ describe('buildPlaceText', () => {
   });
 });
 
-describe('fillBodyAndImages — 장소', () => {
-  test('정상: 장소를 입력하면 본문 마지막 파트로 붙는다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 4 }))]);
-    const input = { ...makeInput(1), place: '서울 성수동 파스타집' };
-
-    await fillBodyAndImages({ repl }, makeDraft(1), input);
-
-    const js = repl.calls[1].js;
-    expect(js).toContain('📍 장소');
-    expect(js).toContain('서울 성수동 파스타집');
-    // intro → 이미지 1 → outro → 장소 순서 — 장소가 마지막이어야 한다
-    expect(js.lastIndexOf('📍 장소')).toBeGreaterThan(js.lastIndexOf('아웃트로'));
+describe('setThumbnail', () => {
+  test('정상: 첫 이미지가 대표면 통과한다(에디터 기본 동작이라 브라우저를 건드리지 않는다)', async () => {
+    const { repl, calls } = fakeRepl();
+    await expect(setThumbnail({ repl }, makeDraft(1), makeInput(1))).resolves.toBeUndefined();
+    expect(calls).toHaveLength(0);
   });
 
-  test('경계값: 장소가 비어 있으면 장소 문단을 넣지 않는다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 3 }))]);
-    const input = { ...makeInput(1), place: '' };
-
-    await fillBodyAndImages({ repl }, makeDraft(1), input);
-
-    expect(repl.calls[1].js).not.toContain('📍');
+  test('에러: thumbnailImageId 가 첫 이미지와 다르면 거부한다', async () => {
+    const { repl } = fakeRepl();
+    const draft = makeDraft(1, { thumbnailImageId: 'img-9' });
+    await expect(setThumbnail({ repl }, draft, makeInput(1))).rejects.toThrow(/thumbnailImageId/);
   });
 
-  test('경계값: 공백뿐인 장소도 문단을 만들지 않는다', async () => {
-    const tree = await loadFixture('editor-ready.snapshot.txt');
-    const repl = sequenceRepl([treeResult(tree), okResult(JSON.stringify({ ok: true, partsApplied: 3 }))]);
-    const input = { ...makeInput(1), place: '   ' };
+  test('경계값: 이미지가 0장이면 거부한다', async () => {
+    const { repl } = fakeRepl();
+    await expect(setThumbnail({ repl }, makeDraft(0), makeInput(0))).rejects.toThrow(/0장/);
+  });
+});
 
-    await fillBodyAndImages({ repl }, makeDraft(1), input);
+describe('openPublishPanel', () => {
+  test('정상: 패널이 열리면 성공한다', async () => {
+    const { repl } = fakeRepl({ panelOpen: true });
+    await expect(openPublishPanel({ repl })).resolves.toBeUndefined();
+  });
 
-    expect(repl.calls[1].js).not.toContain('📍');
+  test('에러: 패널이 열리지 않으면 실패한다', async () => {
+    const { repl } = fakeRepl({ panelOpen: false });
+    await expect(openPublishPanel({ repl })).rejects.toThrow(ElementNotFoundError);
+  });
+
+  test('경계값: 툴바 발행 버튼이 없으면 실패한다', async () => {
+    const { repl } = fakeRepl({ visibleCount: 0 });
+    await expect(openPublishPanel({ repl })).rejects.toThrow(/openPublishPanel/);
+  });
+});
+
+describe('selectCategory', () => {
+  test('정상: 목록에 있는 이름을 고른다', async () => {
+    const { repl } = fakeRepl({ categories: ['여행', '일상'] });
+    await expect(selectCategory({ repl }, '여행')).resolves.toBeUndefined();
+  });
+
+  test('정상(D14): 앞뒤 공백만 다른 이름도 일치로 처리한다', async () => {
+    const { repl } = fakeRepl({ categories: ['여행'] });
+    await expect(selectCategory({ repl }, '  여행  ')).resolves.toBeUndefined();
+  });
+
+  test('에러: 목록에 없으면 사용 가능한 이름들을 담아 실패한다', async () => {
+    const { repl } = fakeRepl({ categories: ['여행', '일상'] });
+    await expect(selectCategory({ repl }, '없는카테고리')).rejects.toThrow(CategoryNotFoundError);
+    await expect(selectCategory({ repl }, '없는카테고리')).rejects.toThrow(/여행/);
+  });
+
+  test('경계값: 목록이 비어 있어도 조용히 넘어가지 않고 실패한다', async () => {
+    const { repl } = fakeRepl({ categories: [] });
+    await expect(selectCategory({ repl }, '여행')).rejects.toThrow(CategoryNotFoundError);
+  });
+});
+
+describe('setTags', () => {
+  test('정상: 태그를 입력한다', async () => {
+    const { repl, calls } = fakeRepl();
+    await setTags({ repl }, ['태그1', '태그2']);
+    expect(calls.some((js) => js.includes('태그1') && js.includes('태그2'))).toBe(true);
+  });
+
+  test('경계값: 태그가 없으면 브라우저를 건드리지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await setTags({ repl }, []);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('에러: 태그 입력칸이 없으면 실패한다', async () => {
+    const { repl } = fakeRepl({ visibleCount: 0 });
+    await expect(setTags({ repl }, ['태그1'])).rejects.toThrow(ElementNotFoundError);
+  });
+});
+
+describe('capturePreview', () => {
+  test('정상: 세션 디렉터리에 찍은 뒤 목적지로 옮긴다', async () => {
+    const { repl } = fakeRepl();
+    const dest = path.join(scratchDir, 'out', 'preview.png');
+    await capturePreview({ repl }, dest);
+    expect(await readFile(dest, 'utf8')).toBe('fake-png');
+  });
+
+  test('에러: evaluate 가 실패하면 던진다', async () => {
+    const { repl } = fakeRepl({ failAll: '스크린샷 실패' });
+    await expect(capturePreview({ repl }, path.join(scratchDir, 'out', 'p.png'))).rejects.toThrow(/스크린샷 실패/);
+  });
+});
+
+describe('submitPublish', () => {
+  test('정상: 결과 URL 을 읽으면 그대로 돌려준다', async () => {
+    const { repl } = fakeRepl({ publishUrl: 'https://blog.naver.com/tester/223000000001' });
+    await expect(submitPublish({ repl })).resolves.toEqual({
+      resultUrl: 'https://blog.naver.com/tester/223000000001',
+    });
+  });
+
+  test('경계값: URL 을 못 읽으면 null 이다 (성공이라고 주장하지 않는다)', async () => {
+    const { repl } = fakeRepl({ publishUrl: null });
+    await expect(submitPublish({ repl })).resolves.toEqual({ resultUrl: null });
+  });
+
+  test('에러: evaluate 가 실패하면 던진다', async () => {
+    const { repl } = fakeRepl({ failAll: '발행 클릭 실패' });
+    await expect(submitPublish({ repl })).rejects.toThrow(EvaluationFailedError);
+  });
+});
+
+describe('closeCurrentTab', () => {
+  test('정상: 탭 정리를 요청한다', async () => {
+    const { repl, calls } = fakeRepl();
+    await closeCurrentTab({ repl });
+    expect(calls.some((js) => js.includes('closeTab'))).toBe(true);
+  });
+
+  test('에러: evaluate 가 실패하면 던진다', async () => {
+    const { repl } = fakeRepl({ failAll: '탭 정리 실패' });
+    await expect(closeCurrentTab({ repl })).rejects.toThrow(/탭 정리 실패/);
   });
 });

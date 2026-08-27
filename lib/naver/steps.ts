@@ -1,32 +1,40 @@
+// 스마트에디터 ONE 조작 단계.
+//
+// 2026-08-25 실측으로 흐름이 바뀌었다: 카테고리·태그·공개설정은 본문 화면이 아니라
+// 툴바의 '발행' 을 눌렀을 때 열리는 **발행 설정 패널** 안에 있다. 그래서 순서가
+//   제목 → 본문·이미지 → 발행 패널 열기 → 카테고리 → 태그 → 미리보기(정지)
+// 가 되고, 실제 발행은 패널 안의 '발행' 버튼을 누르는 별도 단계다.
+// 이 구조 덕분에 안전 계약이 그대로 유지된다 — 패널을 열어 둔 상태에서 멈추므로
+// 사람이 승인하기 전에는 아무것도 발행되지 않는다.
+//
 // D4/D5: 각 단계는 (1) 성공, (2) 대상을 못 찾음(ElementNotFoundError), (3) 검사 자체를
-// 수행 못 함(EvaluationFailedError) 을 서로 다른 에러로 낸다. 요소 찾기는 snapshot 의
-// role+접근성 이름을 먼저 시도하고, 실패하면 selectors.ts 의 [추정] CSS 로 폴백한다.
-// D7: REPL 로 보내는 JS 안의 사용자 값은 전부 JSON.stringify 로 직렬화해 주입한다 —
-// 문자열 연결 금지.
+// 수행 못 함(EvaluationFailedError) 을 서로 다른 에러로 낸다.
+// D7: REPL 로 보내는 JS 안의 사용자 값은 전부 JSON.stringify 로 직렬화해 주입한다.
 
+import { copyFile, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import type { AsideReplApi, PostDraft, PostInput, ProgressFn } from '../types';
 import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } from './errors';
 import {
-  A11Y_BODY_NAMES,
-  A11Y_CATEGORY_CONTROL_NAMES,
-  A11Y_IMAGE_BUTTON_NAMES,
-  A11Y_PUBLISH_BUTTON_NAMES,
-  A11Y_TAG_INPUT_NAMES,
-  A11Y_THUMBNAIL_BUTTON_NAMES,
-  A11Y_TITLE_NAMES,
   BODY_MODULE,
+  CATEGORY_DROPDOWN_BUTTON,
+  CATEGORY_OPTION_LABEL,
   EDITOR_FRAME_NAME,
-  IMAGE_FILE_INPUT,
+  IMAGE_TOOLBAR_BUTTON,
   POPUP_DRAFT_RESTORE_CANCEL,
   POPUP_HELP_PANEL_CLOSE,
+  PUBLISH_CONFIRM_BUTTON,
+  PUBLISH_PANEL_OPEN_BUTTON,
+  TAG_INPUT,
   TIMEOUT_NAVIGATE_MS,
   TIMEOUT_PUBLISH_MS,
   TIMEOUT_TYPE_MS,
   TIMEOUT_UPLOAD_MS,
   TITLE_PLACEHOLDER,
+  UPLOADED_IMAGE,
   writeUrl,
 } from './selectors';
-import { excerptAround, findEntriesByRole, findRefByRoleAndName } from './snapshot-query';
+import { excerptAround } from './snapshot-query';
 import { parseLastJson } from '../aside/protocol';
 
 export interface StepCtx {
@@ -34,15 +42,20 @@ export interface StepCtx {
   onProgress?: ProgressFn;
 }
 
+// 에디터 iframe 안을 가리키는 로케이터 표현식. 직접 page.locator() 를 쓰면 iframe 을 뚫지 못한다.
+const FRAME = `page.frameLocator(${JSON.stringify(`iframe[name="${EDITOR_FRAME_NAME}"]`)})`;
+
+function frameLocator(cssSelector: string): string {
+  return `${FRAME}.locator(${JSON.stringify(cssSelector)})`;
+}
+
 // ---------------------------------------------------------------------------
-// 저수준 evaluate 헬퍼
+// 저수준 헬퍼
 // ---------------------------------------------------------------------------
 
 async function runEvaluate(ctx: StepCtx, stepName: string, js: string, timeoutMs: number): Promise<string> {
   const result = await ctx.repl.evaluate(js, { timeoutMs });
   if (!result.ok) {
-    // D4-(3): evaluate 자체가 실패(ok:false) — 채널 poisoned·탭 없음·REPL 오류를 모두
-    // 포함한다. 이유(result.error)를 그대로 보존해, 라이브에서 무엇이 원인인지 드러낸다.
     throw new EvaluationFailedError(stepName, result.error ?? 'evaluate 가 이유 없이 실패함');
   }
   return result.stdout;
@@ -63,6 +76,7 @@ export function buildPlaceText(place: string): string | null {
   return `\n📍 장소\n${trimmed}`;
 }
 
+/** 현재 화면의 접근성 스냅샷 — 실패했을 때 사람이 볼 근거로 쓴다. */
 async function fetchTree(ctx: StepCtx, stepName: string, timeoutMs: number): Promise<string> {
   const js = `
 await (async () => {
@@ -78,121 +92,65 @@ await (async () => {
   return parsed.tree;
 }
 
-// ---------------------------------------------------------------------------
-// 요소 조회 (D5: snapshot role+name 우선, CSS 는 폴백)
-// ---------------------------------------------------------------------------
-
-interface LocatorRef {
-  expr: string;
-}
-
-function refLocator(ref: string): LocatorRef {
-  return { expr: `page.locator(${JSON.stringify(ref)})` };
-}
-
-function cssLocator(cssSelector: string, insideEditorFrame: boolean): LocatorRef {
-  if (!insideEditorFrame) {
-    return { expr: `page.locator(${JSON.stringify(cssSelector)})` };
-  }
-  const frameSelector = `iframe[name="${EDITOR_FRAME_NAME}"]`;
-  return { expr: `page.frameLocator(${JSON.stringify(frameSelector)}).locator(${JSON.stringify(cssSelector)})` };
-}
-
-interface ResolveOptions {
-  role: string;
-  names: string[];
-  cssSelector: string | null;
-  insideEditorFrame: boolean;
-}
-
-async function resolveLocator(
+/** 셀렉터가 실제로 하나 이상 잡히는지 확인한다. 없으면 스냅샷 발췌를 담아 실패한다. */
+async function requireVisible(
   ctx: StepCtx,
   stepName: string,
-  targetDescription: string,
-  tree: string,
-  opts: ResolveOptions,
+  label: string,
+  cssSelector: string,
   timeoutMs: number,
-): Promise<LocatorRef> {
-  const ref = findRefByRoleAndName(tree, opts.role, opts.names);
-  if (ref) return refLocator(ref);
-
-  if (opts.cssSelector) {
-    const candidate = cssLocator(opts.cssSelector, opts.insideEditorFrame);
-    const checkJs = `
+  excerptNeedle: string,
+): Promise<void> {
+  const js = `
 await (async () => {
-  const count = await (${candidate.expr}).count();
+  const locator = ${frameLocator(cssSelector)};
+  let count = 0;
+  for (let attempt = 0; attempt < 20 && count === 0; attempt++) {
+    count = await locator.count();
+    if (count === 0) await sleep(500);
+  }
   console.log(JSON.stringify({ count }));
 })();
 `;
-    const stdout = await runEvaluate(ctx, stepName, checkJs, timeoutMs);
-    const parsed = parseJsonStdout<{ count?: unknown }>(stepName, stdout);
-    if (typeof parsed.count === 'number' && parsed.count > 0) {
-      return candidate;
-    }
+  const stdout = await runEvaluate(ctx, stepName, js, timeoutMs);
+  const { count } = parseJsonStdout<{ count?: number }>(stepName, stdout);
+  if (typeof count !== 'number' || count === 0) {
+    const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS).catch(() => '(스냅샷도 실패)');
+    throw new ElementNotFoundError(stepName, `${label} (${cssSelector})`, excerptAround(tree, excerptNeedle));
   }
-
-  // D4-(2): evaluate 는 성공했지만(브라우저는 살아있다) role+name 도 CSS 폴백도 대상을
-  // 찾지 못했다 — selectors.ts 의 [추정] 값이 틀렸을 가능성이 높다.
-  throw new ElementNotFoundError(stepName, targetDescription, excerptAround(tree, opts.role));
-}
-
-async function clickLocator(ctx: StepCtx, stepName: string, locator: LocatorRef, timeoutMs: number): Promise<void> {
-  const js = `
-await (async () => {
-  await (${locator.expr}).click();
-  console.log(JSON.stringify({ clicked: true }));
-})();
-`;
-  await runEvaluate(ctx, stepName, js, timeoutMs);
-}
-
-async function typeIntoLocator(
-  ctx: StepCtx,
-  stepName: string,
-  locator: LocatorRef,
-  value: string,
-  timeoutMs: number,
-): Promise<void> {
-  // D7: value 는 JSON.stringify 로 직렬화해 리터럴로 주입한다 — 문자열 연결 금지.
-  // 브리프: 제목/본문은 <input> 이 아니라 contenteditable 이다 — 클릭 후 키보드 입력.
-  const js = `
-await (async () => {
-  const target = (${locator.expr});
-  await target.click();
-  await target.pressSequentially(${JSON.stringify(value)});
-  console.log(JSON.stringify({ typed: true }));
-})();
-`;
-  await runEvaluate(ctx, stepName, js, timeoutMs);
 }
 
 // ---------------------------------------------------------------------------
 // 단계
 // ---------------------------------------------------------------------------
 
-/**
- * 탭을 열고 글쓰기 URL로 진입한 뒤, 에디터 iframe이 실제로 로드됐는지 확인한다.
- * 확인에 쓴 URL(가능하면 페이지가 보고한 실제 URL)을 돌려준다.
- */
+/** 탭을 열고 글쓰기 URL로 진입한 뒤, 에디터 iframe이 실제로 로드됐는지 확인한다. */
 export async function openEditor(ctx: StepCtx, blogId: string): Promise<string> {
   const stepName = 'openEditor';
   const url = writeUrl(blogId);
+  // 실측: iframe 존재를 스냅샷의 접근성 이름으로 판정하면 안 된다 — iframe 의 접근성
+  // 이름은 title/aria-label 에서 오지 name 속성에서 오지 않아, 정상 화면에서도 이름 없는
+  // `- iframe:` 으로만 찍힌다. frameLocator 가 쓰는 것과 같은 셀렉터를 DOM 에서 확인한다.
   const js = `
 await (async () => {
   page = await openTab(${JSON.stringify(url)});
   await page.waitForLoadState('load');
+  const frameSelector = ${JSON.stringify(`iframe[name="${EDITOR_FRAME_NAME}"]`)};
+  let hasEditorFrame = false;
+  for (let attempt = 0; attempt < 30 && !hasEditorFrame; attempt++) {
+    hasEditorFrame = await page.evaluate((sel) => document.querySelector(sel) !== null, frameSelector);
+    if (!hasEditorFrame) await sleep(500);
+  }
   const result = await snapshot(page, { interactive: true });
-  console.log(JSON.stringify({ tree: result.tree, url: page.url() }));
+  console.log(JSON.stringify({ tree: result.tree, url: page.url(), hasEditorFrame }));
 })();
 `;
   const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_NAVIGATE_MS);
-  const parsed = parseJsonStdout<{ tree?: unknown; url?: unknown }>(stepName, stdout);
+  const parsed = parseJsonStdout<{ tree?: unknown; url?: unknown; hasEditorFrame?: unknown }>(stepName, stdout);
   if (typeof parsed.tree !== 'string') {
     throw new EvaluationFailedError(stepName, '진입 후 snapshot 응답에 tree 필드가 없음');
   }
-
-  const iframeRef = findRefByRoleAndName(parsed.tree, 'iframe', [EDITOR_FRAME_NAME]);
-  if (!iframeRef) {
+  if (parsed.hasEditorFrame !== true) {
     throw new ElementNotFoundError(
       stepName,
       `에디터 iframe(name="${EDITOR_FRAME_NAME}") — 로그인 페이지 등 다른 페이지로 튕겼을 가능성`,
@@ -205,8 +163,8 @@ await (async () => {
 }
 
 /**
- * danger_zone: 이 함수는 `openEditor` 가 이 인스턴스에서 연 탭만 닫는다 — 사용자가 열어둔
- * 다른 탭은 건드리지 않는다. 호출 여부(탭을 열었는지)는 호출자(publisher.ts)가 판단한다.
+ * danger_zone: `openEditor` 가 이 인스턴스에서 연 탭만 닫는다 — 사용자가 열어둔 다른 탭은
+ * 건드리지 않는다.
  */
 export async function closeCurrentTab(ctx: StepCtx): Promise<void> {
   const stepName = 'closeCurrentTab';
@@ -221,10 +179,7 @@ await (async () => {
   await runEvaluate(ctx, stepName, js, TIMEOUT_NAVIGATE_MS);
 }
 
-/**
- * D10: 진입 시 팝업 2종(작성중인 글 복구, 도움말 패널)을 정리한다 — 선택적 정리다.
- * 없어도 실패하지 않는다. "정리했다"와 "없었음"을 진행 로그로 구분한다.
- */
+/** D10: 진입 팝업 정리는 선택적이다 — 없어도 실패하지 않는다. */
 export async function dismissEntryPopups(ctx: StepCtx): Promise<void> {
   const targets = [
     { label: '작성중인 글 복구 팝업', selector: POPUP_DRAFT_RESTORE_CANCEL },
@@ -234,87 +189,50 @@ export async function dismissEntryPopups(ctx: StepCtx): Promise<void> {
   for (const target of targets) {
     const js = `
 await (async () => {
-  const locator = page.locator(${JSON.stringify(target.selector)});
+  const locator = ${frameLocator('__SELECTOR__')};
   const count = await locator.count();
   if (count > 0) {
     await locator.first().click();
   }
   console.log(JSON.stringify({ dismissed: count > 0 }));
 })();
-`;
+`.replace('"__SELECTOR__"', JSON.stringify(target.selector));
+
     const result = await ctx.repl.evaluate(js, { timeoutMs: TIMEOUT_TYPE_MS });
     if (!result.ok) {
-      // D10: 선택적 정리 — evaluate 실패도 이 단계 전체를 실패시키지 않는다.
       ctx.onProgress?.(`[dismissEntryPopups] ${target.label} 확인 실패(치명적이지 않음): ${result.error ?? 'unknown'}`);
       continue;
     }
-    try {
-      const parsed = JSON.parse(result.stdout) as { dismissed?: boolean };
-      ctx.onProgress?.(`[dismissEntryPopups] ${target.label}: ${parsed.dismissed ? '정리했다' : '없었음'}`);
-    } catch {
-      ctx.onProgress?.(`[dismissEntryPopups] ${target.label}: 응답 파싱 실패(치명적이지 않음)`);
-    }
-  }
-}
-
-/**
- * D14: 카테고리를 이름으로 고른다. 앞뒤 공백을 제거한 정확 일치만 허용한다 — 부분/유사
- * 일치는 하지 않는다. 일치하는 카테고리가 없으면 사용 가능한 이름 목록을 담아 실패한다.
- * 기본 카테고리로 조용히 넘어가지 않는다.
- */
-export async function selectCategory(ctx: StepCtx, categoryName: string): Promise<void> {
-  const stepName = 'selectCategory';
-  const trimmedTarget = categoryName.trim();
-
-  const openTree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  // D14: 카테고리 UI 에 대한 CSS 가설은 브리프에 없다(URL 방식만 있었고 D14 로 폐기됨) —
-  // CSS 폴백 없이 role+name 만 시도하고, 못 찾으면 바로 실패한다.
-  const controlLocator = await resolveLocator(
-    ctx,
-    stepName,
-    '카테고리 선택 컨트롤',
-    openTree,
-    { role: 'button', names: A11Y_CATEGORY_CONTROL_NAMES, cssSelector: null, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
-  await clickLocator(ctx, stepName, controlLocator, TIMEOUT_TYPE_MS);
-
-  const listTree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  const options = findEntriesByRole(listTree, 'listitem');
-  const match = options.find((option) => option.name.trim() === trimmedTarget);
-  if (!match) {
-    throw new CategoryNotFoundError(
-      categoryName,
-      options.map((option) => option.name.trim()),
+    const parsed = parseLastJson<{ dismissed?: boolean }>(result.stdout);
+    ctx.onProgress?.(
+      `[dismissEntryPopups] ${target.label}: ${parsed?.dismissed ? '정리했다' : '없었음'}`,
     );
   }
-
-  await clickLocator(ctx, stepName, refLocator(match.ref), TIMEOUT_TYPE_MS);
-  ctx.onProgress?.(`[${stepName}] 카테고리 "${trimmedTarget}" 선택함`);
 }
 
 export async function fillTitle(ctx: StepCtx, title: string): Promise<void> {
   const stepName = 'fillTitle';
-  const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  const locator = await resolveLocator(
-    ctx,
-    stepName,
-    '제목 입력 영역',
-    tree,
-    { role: 'textbox', names: A11Y_TITLE_NAMES, cssSelector: TITLE_PLACEHOLDER, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
-  await typeIntoLocator(ctx, stepName, locator, title, TIMEOUT_TYPE_MS);
+  await requireVisible(ctx, stepName, '제목 입력 영역', TITLE_PLACEHOLDER, TIMEOUT_TYPE_MS, 'iframe');
+
+  // 제목 영역은 <input> 이 아니라 contenteditable 이라 클릭 후 키보드로 친다.
+  const js = `
+await (async () => {
+  await ${frameLocator(TITLE_PLACEHOLDER)}.first().click();
+  await page.keyboard.type(${JSON.stringify(title)}, { delay: ${TYPE_DELAY_MS} });
+  await sleep(${SETTLE_MS});
+  console.log(JSON.stringify({ typed: true }));
+})();
+`;
+  await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
   ctx.onProgress?.(`[${stepName}] 제목 입력 완료`);
 }
 
-type BodyPart = { kind: 'text'; value: string } | { kind: 'image'; path: string; caption: string };
-
 /**
- * D11: intro → (이미지[0] → blocks[0].caption) → ... → outro 순서로 조립한다. 이미지는
- * `locator.setInputFiles` 를 쓴다. t2 의 계약(blocks[i].imageId===images[i].id,
- * thumbnailImageId===images[0].id)을 재검증만 한다 — 어긋나면 재정렬하지 않고 거부한다.
- * 이미지가 0장이면(최소 1장 필요) 브라우저를 건드리기 전에 거부한다.
+ * 본문과 이미지를 순서대로 채운다.
+ *
+ * 실측: 사진 추가 버튼은 DOM 의 file input 이 아니라 네이티브 파일 선택창을 연다. 그리고
+ * Aside 는 **세션 디렉터리 밖의 경로를 거부한다**("escapes the session directory") — 그래서
+ * 업로드 전에 이미지를 세션 디렉터리로 복사해 둔다.
  */
 export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: PostInput): Promise<void> {
   const stepName = 'fillBodyAndImages';
@@ -340,70 +258,156 @@ export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: P
     );
   }
 
-  const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  const bodyLocator = await resolveLocator(
-    ctx,
-    stepName,
-    '본문 입력 영역',
-    tree,
-    { role: 'textbox', names: A11Y_BODY_NAMES, cssSelector: BODY_MODULE, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
-  const imageButtonLocator = await resolveLocator(
-    ctx,
-    stepName,
-    '사진 추가 버튼',
-    tree,
-    { role: 'button', names: A11Y_IMAGE_BUTTON_NAMES, cssSelector: null, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
+  await requireVisible(ctx, stepName, '본문 입력 영역', BODY_MODULE, TIMEOUT_TYPE_MS, 'iframe');
 
-  const parts: BodyPart[] = [{ kind: 'text', value: draft.intro }];
-  for (let i = 0; i < input.images.length; i++) {
-    parts.push({ kind: 'image', path: input.images[i].path, caption: draft.blocks[i].caption });
+  const stagedPaths = await stageImagesInSession(ctx, stepName, input.images.map((image) => image.path));
+
+  await focusBody(ctx, stepName);
+
+  // 인트로 → (이미지 + 캡션) × N → 아웃트로 → 장소
+  await typeIntoBody(ctx, stepName, draft.intro);
+
+  for (let i = 0; i < stagedPaths.length; i++) {
+    await insertImage(ctx, stepName, stagedPaths[i], i + 1);
+    await typeIntoBody(ctx, stepName, draft.blocks[i].caption);
   }
-  parts.push({ kind: 'text', value: draft.outro });
 
-  // 사용자가 입력한 장소는 글 맨 끝에 붙인다. 초안(LLM)이 아니라 입력값을 그대로 쓰므로
-  // 지어낸 상호명이 들어갈 여지가 없다. 비어 있으면 문단 자체를 넣지 않는다.
+  await typeIntoBody(ctx, stepName, draft.outro, { newParagraph: true });
+
+  // 사용자가 입력한 장소는 초안이 아니라 입력값을 그대로 쓴다 — 지어낼 여지가 없다.
   const placeText = buildPlaceText(input.place);
   if (placeText !== null) {
-    parts.push({ kind: 'text', value: placeText });
+    await typeIntoBody(ctx, stepName, placeText);
   }
 
-  // fileInput 도 다른 로케이터와 마찬가지로 에디터 iframe(EDITOR_FRAME_NAME) 안 요소다 —
-  // cssLocator() 로 같은 frameLocator 우회 경로를 태운다(직접 page.locator() 를 쓰면
-  // iframe 을 뚫지 못한다).
-  const fileInputLocator = cssLocator(IMAGE_FILE_INPUT, true);
-
-  // D7: parts 전체(사용자 값 포함)를 JSON.stringify 로 직렬화해 주입한다.
-  const js = `
-await (async () => {
-  const body = (${bodyLocator.expr});
-  const imageButton = (${imageButtonLocator.expr});
-  const fileInput = (${fileInputLocator.expr});
-  const parts = ${JSON.stringify(parts)};
-  await body.click();
-  for (const part of parts) {
-    if (part.kind === 'text') {
-      if (part.value.length > 0) {
-        await body.pressSequentially(part.value);
-      }
-    } else {
-      await imageButton.click();
-      await fileInput.setInputFiles(part.path);
-      await body.click();
-      await body.pressSequentially(part.caption);
-    }
-  }
-  console.log(JSON.stringify({ ok: true, partsApplied: parts.length }));
-})();
-`;
-  await runEvaluate(ctx, stepName, js, TIMEOUT_UPLOAD_MS);
   ctx.onProgress?.(`[${stepName}] 본문·이미지 ${input.images.length}장 조립 완료`);
 }
 
-/** D11: 첫 이미지를 대표(썸네일)로 지정한다. */
+/**
+ * Aside 세션 디렉터리 경로. Aside 는 이 디렉터리 밖의 파일을 읽지도 쓰지도 못한다
+ * ("escapes the session directory") — 업로드할 파일과 스크린샷 목적지가 모두 여기 있어야 한다.
+ */
+async function readSessionDir(ctx: StepCtx, stepName: string): Promise<string> {
+  const stdout = await runEvaluate(
+    ctx,
+    stepName,
+    `await (async () => { console.log(JSON.stringify({ dir: pwd })); })();`,
+    TIMEOUT_TYPE_MS,
+  );
+  const { dir } = parseJsonStdout<{ dir?: unknown }>(stepName, stdout);
+  if (typeof dir !== 'string' || dir === '') {
+    throw new EvaluationFailedError(stepName, 'aside 세션 디렉터리(pwd)를 읽지 못함');
+  }
+  return dir;
+}
+
+/** Aside 세션 디렉터리로 이미지를 복사하고, 그 안의 경로들을 돌려준다. */
+async function stageImagesInSession(ctx: StepCtx, stepName: string, imagePaths: string[]): Promise<string[]> {
+  const dir = await readSessionDir(ctx, stepName);
+  const stagingDir = path.join(dir, 'anb-uploads');
+  await mkdir(stagingDir, { recursive: true });
+
+  const staged: string[] = [];
+  for (let i = 0; i < imagePaths.length; i++) {
+    const dest = path.join(stagingDir, `${i}${path.extname(imagePaths[i])}`);
+    await copyFile(imagePaths[i], dest);
+    staged.push(dest);
+  }
+  ctx.onProgress?.(`[${stepName}] 이미지 ${staged.length}장을 aside 세션 디렉터리로 준비함`);
+  return staged;
+}
+
+// 실측: 조각마다 본문을 다시 클릭해 캐럿을 잡으려 하면 글이 뒤엉킨다. 클릭 지점이 문단
+// 중간(줄바꿈된 시각적 위치)에 떨어져서, 그 자리에 이미지가 끼어들고 나머지 글이 뒤로
+// 밀렸다 — 인트로가 "…점검하려 [이미지] 고 올린…" 처럼 쪼개졌다.
+// 그래서 본문 진입 때 **딱 한 번만** 클릭해 캐럿을 잡고, 이후에는 캐럿을 건드리지 않는다.
+// 타이핑도 사진 삽입도 항상 현재 캐럿(=마지막으로 쓴 자리) 뒤에서 이어진다.
+
+// 실측: page.keyboard.type() 은 스마트에디터가 입력을 다 처리하기 전에 반환한다. 그래서
+// 곧바로 다음 동작(사진 삽입·다음 문단 입력)을 시키면 글자가 뒤엉킨다 — 실제로 인트로가
+// "…파이프라인" 에서 잘리고 그 자리에 이미지가 끼어든 뒤 나머지가 뒤에 붙었다.
+// 그래서 (1) 줄 단위로 끊어 Enter 를 명시적으로 누르고, (2) 타이핑에 딜레이를 주고,
+// (3) 각 조각 뒤에 편집기가 반영할 시간을 준다.
+const TYPE_DELAY_MS = 12;
+const SETTLE_MS = 400;
+
+/** 본문에 캐럿을 한 번만 잡는다. 이후 모든 입력은 이 캐럿 뒤로 이어진다. */
+async function focusBody(ctx: StepCtx, stepName: string): Promise<void> {
+  const js = `
+await (async () => {
+  await ${frameLocator(BODY_MODULE)}.last().click();
+  await sleep(300);
+  console.log(JSON.stringify({ focused: true }));
+})();
+`;
+  await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+}
+
+async function typeIntoBody(
+  ctx: StepCtx,
+  stepName: string,
+  text: string,
+  opts: { newParagraph?: boolean } = {},
+): Promise<void> {
+  if (text === '') return;
+  const js = `
+await (async () => {
+  if (${opts.newParagraph === true}) {
+    await page.keyboard.press('Enter');
+    await sleep(150);
+  }
+  const lines = ${JSON.stringify(text.split(String.fromCharCode(10)))};
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      await page.keyboard.press('Enter');
+      await sleep(150);
+    }
+    if (lines[i] !== '') {
+      await page.keyboard.type(lines[i], { delay: ${TYPE_DELAY_MS} });
+      await sleep(150);
+    }
+  }
+  await sleep(${SETTLE_MS});
+  console.log(JSON.stringify({ typed: true }));
+})();
+`;
+  await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+}
+
+async function insertImage(ctx: StepCtx, stepName: string, stagedPath: string, expectedCount: number): Promise<void> {
+  const js = `
+await (async () => {
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 20000 }),
+    ${frameLocator(IMAGE_TOOLBAR_BUTTON)}.first().click(),
+  ]);
+  await chooser.setFiles(${JSON.stringify(stagedPath)});
+  const images = ${frameLocator(UPLOADED_IMAGE)};
+  let count = 0;
+  for (let attempt = 0; attempt < 120 && count < ${expectedCount}; attempt++) {
+    count = await images.count();
+    if (count < ${expectedCount}) await sleep(1000);
+  }
+  await sleep(${SETTLE_MS});
+  console.log(JSON.stringify({ count }));
+})();
+`;
+  const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_UPLOAD_MS);
+  const { count } = parseJsonStdout<{ count?: number }>(stepName, stdout);
+  if (typeof count !== 'number' || count < expectedCount) {
+    throw new EvaluationFailedError(
+      stepName,
+      `이미지 업로드가 확인되지 않음 (기대 ${expectedCount}장, 실제 ${String(count)}장)`,
+    );
+  }
+  ctx.onProgress?.(`[${stepName}] 이미지 ${expectedCount}장째 업로드 확인`);
+}
+
+/**
+ * 실측: 대표(썸네일) 이미지는 스마트에디터 ONE 이 **본문 첫 번째 이미지를 기본값으로**
+ * 삼는다. 이 프로젝트의 계약(첫 장이 대표)과 같으므로 별도 조작이 필요 없다 — 대신
+ * 초안과 입력이 그 계약을 지키는지만 확인한다. 브라우저를 건드리지 않는다.
+ */
 export async function setThumbnail(ctx: StepCtx, draft: PostDraft, input: PostInput): Promise<void> {
   const stepName = 'setThumbnail';
   if (input.images.length < 1) {
@@ -414,96 +418,160 @@ export async function setThumbnail(ctx: StepCtx, draft: PostDraft, input: PostIn
       `[${stepName}] thumbnailImageId(${draft.thumbnailImageId})가 첫 번째 이미지 id(${input.images[0].id})와 다릅니다.`,
     );
   }
-
-  const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  const locator = await resolveLocator(
-    ctx,
-    stepName,
-    '대표 이미지 지정 컨트롤 — [추정] 미검증(스마트에디터가 첫 이미지를 자동으로 대표 지정할 수도 있음, docs/naver-live-validation.md 참고)',
-    tree,
-    { role: 'button', names: A11Y_THUMBNAIL_BUTTON_NAMES, cssSelector: null, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
-  await clickLocator(ctx, stepName, locator, TIMEOUT_TYPE_MS);
-  ctx.onProgress?.(`[${stepName}] 대표 이미지 지정 완료 (thumbnailImageId=${draft.thumbnailImageId})`);
+  ctx.onProgress?.(`[${stepName}] 첫 번째 이미지가 대표로 쓰인다(에디터 기본 동작)`);
 }
 
-export async function setTags(ctx: StepCtx, tags: string[]): Promise<void> {
-  const stepName = 'setTags';
-  const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS);
-  const locator = await resolveLocator(
-    ctx,
-    stepName,
-    '태그 입력란',
-    tree,
-    { role: 'textbox', names: A11Y_TAG_INPUT_NAMES, cssSelector: null, insideEditorFrame: true },
-    TIMEOUT_TYPE_MS,
-  );
+/** 툴바의 '발행' 을 눌러 발행 설정 패널을 연다. 아직 발행되지 않는다. */
+export async function openPublishPanel(ctx: StepCtx): Promise<void> {
+  const stepName = 'openPublishPanel';
+  await requireVisible(ctx, stepName, '툴바 발행 버튼', PUBLISH_PANEL_OPEN_BUTTON, TIMEOUT_TYPE_MS, '발행');
 
-  // D7: tags 는 JSON.stringify 로 직렬화해 주입한다.
   const js = `
 await (async () => {
-  const target = (${locator.expr});
-  await target.click();
+  await ${frameLocator(PUBLISH_PANEL_OPEN_BUTTON)}.first().click();
+  const dropdown = ${frameLocator(CATEGORY_DROPDOWN_BUTTON)};
+  let count = 0;
+  for (let attempt = 0; attempt < 30 && count === 0; attempt++) {
+    count = await dropdown.count();
+    if (count === 0) await sleep(500);
+  }
+  console.log(JSON.stringify({ panelOpen: count > 0 }));
+})();
+`;
+  const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+  const { panelOpen } = parseJsonStdout<{ panelOpen?: boolean }>(stepName, stdout);
+  if (panelOpen !== true) {
+    const tree = await fetchTree(ctx, stepName, TIMEOUT_TYPE_MS).catch(() => '(스냅샷도 실패)');
+    throw new ElementNotFoundError(stepName, '발행 설정 패널(카테고리 드롭다운이 나타나지 않음)', excerptAround(tree, '발행'));
+  }
+  ctx.onProgress?.(`[${stepName}] 발행 설정 패널 열림`);
+}
+
+/**
+ * 카테고리를 이름으로 고른다. 앞뒤 공백을 제거한 정확 일치만 허용한다 — 부분/유사 일치는
+ * 하지 않고, 없으면 사용 가능한 이름 목록을 담아 실패한다. 기본 카테고리로 조용히 넘어가지
+ * 않는다. (발행 설정 패널이 열려 있어야 한다.)
+ */
+export async function selectCategory(ctx: StepCtx, categoryName: string): Promise<void> {
+  const stepName = 'selectCategory';
+  const target = categoryName.trim();
+
+  const js = `
+await (async () => {
+  await ${frameLocator(CATEGORY_DROPDOWN_BUTTON)}.first().click();
+  const options = ${frameLocator(CATEGORY_OPTION_LABEL)};
+  let count = 0;
+  for (let attempt = 0; attempt < 20 && count === 0; attempt++) {
+    count = await options.count();
+    if (count === 0) await sleep(500);
+  }
+  const names = [];
+  for (let i = 0; i < count; i++) {
+    names.push(((await options.nth(i).textContent()) || '').trim());
+  }
+  const target = ${JSON.stringify(target)};
+  const index = names.indexOf(target);
+  if (index >= 0) {
+    await options.nth(index).click();
+  }
+  console.log(JSON.stringify({ names, index }));
+})();
+`;
+  const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+  const { names, index } = parseJsonStdout<{ names?: string[]; index?: number }>(stepName, stdout);
+  const available = Array.isArray(names) ? names : [];
+  if (typeof index !== 'number' || index < 0) {
+    throw new CategoryNotFoundError(categoryName, available);
+  }
+  ctx.onProgress?.(`[${stepName}] 카테고리 "${target}" 선택함`);
+}
+
+/** 태그를 입력한다. 각 태그는 Enter 로 확정한다. (발행 설정 패널이 열려 있어야 한다.) */
+export async function setTags(ctx: StepCtx, tags: string[]): Promise<void> {
+  const stepName = 'setTags';
+  if (tags.length === 0) {
+    ctx.onProgress?.(`[${stepName}] 태그 없음 — 건너뜀`);
+    return;
+  }
+  await requireVisible(ctx, stepName, '태그 입력칸', TAG_INPUT, TIMEOUT_TYPE_MS, '태그');
+
+  const js = `
+await (async () => {
+  const input = ${frameLocator(TAG_INPUT)}.first();
   const tags = ${JSON.stringify(tags)};
   for (const tag of tags) {
-    await target.pressSequentially(tag);
-    await target.press('Enter');
+    await input.click();
+    await page.keyboard.type(tag);
+    await page.keyboard.press('Enter');
+    await sleep(300);
   }
-  console.log(JSON.stringify({ ok: true, count: tags.length }));
+  console.log(JSON.stringify({ entered: tags.length }));
 })();
 `;
   await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
   ctx.onProgress?.(`[${stepName}] 태그 ${tags.length}개 입력 완료`);
 }
 
-/** D12: 미리보기 스크린샷을 남긴다. 이 스크린샷을 워커 컨텍스트로 Read 하지 않는다. */
+/**
+ * 채워진 화면을 스크린샷으로 남긴다 — 사람이 승인할 근거다.
+ *
+ * 실측: Aside 는 세션 디렉터리 밖의 경로에 쓰는 것을 거부한다(업로드와 같은 제약).
+ * 그래서 세션 디렉터리에 찍은 뒤 Node 쪽에서 목적지로 옮긴다.
+ */
 export async function capturePreview(ctx: StepCtx, screenshotPath: string): Promise<void> {
   const stepName = 'capturePreview';
+  await mkdir(path.dirname(screenshotPath), { recursive: true });
+
+  const sessionDir = await readSessionDir(ctx, stepName);
+  const stagedPath = path.join(sessionDir, 'anb-preview.png');
+
   const js = `
 await (async () => {
-  await page.screenshot({ path: ${JSON.stringify(screenshotPath)} });
-  console.log(JSON.stringify({ ok: true }));
+  await page.screenshot({ path: ${JSON.stringify(stagedPath)}, fullPage: true });
+  console.log(JSON.stringify({ captured: true }));
 })();
 `;
-  await runEvaluate(ctx, stepName, js, TIMEOUT_NAVIGATE_MS);
-  ctx.onProgress?.(`[${stepName}] 미리보기 스크린샷 저장함: ${screenshotPath}`);
+  await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+  await copyFile(stagedPath, screenshotPath);
+  ctx.onProgress?.(`[${stepName}] 미리보기 스크린샷 저장: ${screenshotPath}`);
 }
 
-// D8: 발행 버튼을 누르는 코드는 이 함수 안에만 있다. fillEditor 의 코드 경로 어디에서도
-// 이 함수를 호출하지 않는다(publisher.test.ts 가 evaluate 호출에서 이 마커의 등장 횟수로
-// "발행 클릭 횟수"를 직접 센다).
-export const PUBLISH_CLICK_MARKER = '/* NAVER_PUBLISH_CLICK */';
+/**
+ * 안전 테스트가 "발행 클릭이 몇 번 일어났는가" 를 셀 수 있도록, 발행 클릭 JS 에만 넣는 표식.
+ * 줄바꿈이 공백으로 접히므로 `//` 주석이 아니라 블록 주석으로 넣는다.
+ */
+export const PUBLISH_CLICK_MARKER = 'ANB_PUBLISH_CLICK';
 
-export interface SubmitPublishResult {
-  resultUrl: string | null;
-}
-
-/** D8: 발행 버튼을 누르는 유일한 함수. */
-export async function submitPublish(ctx: StepCtx): Promise<SubmitPublishResult> {
+/**
+ * danger_zone: 실제 발행. 발행 설정 패널 안의 '발행' 버튼을 누른다.
+ * 이 함수는 오직 publisher.publish() 에서만 호출된다.
+ */
+export async function submitPublish(ctx: StepCtx): Promise<{ resultUrl: string | null }> {
   const stepName = 'submitPublish';
-  const tree = await fetchTree(ctx, stepName, TIMEOUT_PUBLISH_MS);
-  const locator = await resolveLocator(
-    ctx,
-    stepName,
-    '발행 버튼',
-    tree,
-    { role: 'button', names: A11Y_PUBLISH_BUTTON_NAMES, cssSelector: null, insideEditorFrame: true },
-    TIMEOUT_PUBLISH_MS,
-  );
-
+  // 실측: 발행 후 이동은 최상위 페이지가 아니라 mainFrame 안에서 일어난다. 최상위 URL 만
+  // 보면 계속 `?Redirect=Write` 라서 발행에 성공해도 결과 URL 을 못 읽는다 —
+  // 프레임 URL 도 함께 본다. 발행된 글은 `logNo=` 를 갖거나 `/<blogId>/<글번호>` 꼴이다.
   const js = `
 await (async () => {
-  ${PUBLISH_CLICK_MARKER}
-  await (${locator.expr}).click();
-  await page.waitForLoadState('load');
-  const url = page.url();
-  console.log(JSON.stringify({ url }));
+  /* ${PUBLISH_CLICK_MARKER} */
+  await ${frameLocator(PUBLISH_CONFIRM_BUTTON)}.first().click();
+  const looksPublished = (u) => typeof u === 'string'
+    && u.includes('blog.naver.com')
+    && !u.includes('Redirect=Write')
+    && (u.includes('logNo=') || /blog\\.naver\\.com\\/[^/?#]+\\/[0-9]+/.test(u));
+  let url = null;
+  for (let attempt = 0; attempt < 60 && url === null; attempt++) {
+    await sleep(1000);
+    const candidates = [page.url()];
+    for (const frame of page.frames()) {
+      candidates.push(frame.url());
+    }
+    url = candidates.find(looksPublished) || null;
+  }
+  console.log(JSON.stringify({ resultUrl: url, seen: [page.url()].concat(page.frames().map((f) => f.url())) }));
 })();
 `;
   const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_PUBLISH_MS);
-  const parsed = parseJsonStdout<{ url?: unknown }>(stepName, stdout);
-  const resultUrl = typeof parsed.url === 'string' ? parsed.url : null;
-  ctx.onProgress?.(`[${stepName}] 발행 버튼 클릭함 (url=${resultUrl ?? 'unknown'})`);
-  return { resultUrl };
+  const { resultUrl } = parseJsonStdout<{ resultUrl?: unknown }>(stepName, stdout);
+  return { resultUrl: typeof resultUrl === 'string' ? resultUrl : null };
 }

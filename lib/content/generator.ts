@@ -15,7 +15,18 @@ const MAX_IMAGES = 20;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_TEMPLATE_PATH = path.join(moduleDir, '..', '..', 'prompts', 'post-draft.md');
 
-const POST_DRAFT_JSON_SCHEMA = z.toJSONSchema(PostDraftSchema);
+// 실측(2026-08-25): z.toJSONSchema() 는 `$schema: "https://json-schema.org/draft/2020-12/schema"`
+// 를 붙이는데, claude CLI 의 검증기가 그 메타스키마를 등록해 두지 않아 통째로 거부한다:
+//   Error: --json-schema is not a valid JSON Schema:
+//   no schema with key or ref "https://json-schema.org/draft/2020-12/schema"
+// CLI 는 exit=1 에 stdout 을 한 글자도 내지 않아, 이 키 하나 때문에 호출이 항상 실패했다.
+// 스키마 본문은 그대로 두고 `$schema` 만 떼서 넘긴다.
+function toClaudeJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  const { $schema: _unused, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
+  return rest;
+}
+
+export const POST_DRAFT_JSON_SCHEMA = toClaudeJsonSchema(PostDraftSchema);
 
 export class ContentGenerator implements ContentGeneratorApi {
   constructor(private readonly config: AppConfig) {}

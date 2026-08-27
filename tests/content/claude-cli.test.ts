@@ -133,3 +133,48 @@ describe('callClaude — 경계값/타임아웃', () => {
     expect(psOutput).not.toContain('fake-claude.mjs');
   });
 });
+
+// 실측 회귀(2026-08-25): `--add-dir` 는 가변인자라 뒤따르는 위치인자를 전부 디렉터리로
+// 삼킨다. 그래서 프롬프트가 CLI 에 닿지 못하고 "Input must be provided ..." 로 죽었다.
+describe('callClaude — argv 조립', () => {
+  test('에러 방지: 프롬프트 바로 앞에 `--` 가 있어 옵션 파싱이 끊긴다', async () => {
+    const result = await callClaude({
+      config: fakeConfig(),
+      prompt: 'FAKE_MODE:argv',
+      jsonSchema: { type: 'object' },
+      allowDirs: ['/tmp/a', '/tmp/b'],
+    });
+
+    expect(result.ok).toBe(true);
+    const argv = (result.structuredOutput as { argv: string[] }).argv;
+    expect(argv[argv.length - 1]).toBe('FAKE_MODE:argv');
+    expect(argv[argv.length - 2]).toBe('--');
+  });
+
+  test('정상: allowDirs 가 모두 --add-dir 로 실린다', async () => {
+    const result = await callClaude({
+      config: fakeConfig(),
+      prompt: 'FAKE_MODE:argv',
+      jsonSchema: { type: 'object' },
+      allowDirs: ['/tmp/a', '/tmp/b'],
+    });
+
+    const argv = (result.structuredOutput as { argv: string[] }).argv;
+    expect(argv.filter((a) => a === '--add-dir')).toHaveLength(2);
+    expect(argv).toContain('/tmp/a');
+    expect(argv).toContain('/tmp/b');
+  });
+
+  test('경계값: allowDirs 가 비어도 `--` 와 프롬프트는 그대로 마지막에 온다', async () => {
+    const result = await callClaude({
+      config: fakeConfig(),
+      prompt: 'FAKE_MODE:argv',
+      jsonSchema: { type: 'object' },
+      allowDirs: [],
+    });
+
+    const argv = (result.structuredOutput as { argv: string[] }).argv;
+    expect(argv).not.toContain('--add-dir');
+    expect(argv[argv.length - 2]).toBe('--');
+  });
+});
