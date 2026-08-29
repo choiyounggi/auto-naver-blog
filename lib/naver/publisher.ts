@@ -18,6 +18,7 @@ import type {
 import { PublishResultSchema } from '../types';
 import type { StepCtx } from './steps';
 import {
+  attachPlace,
   capturePreview,
   closeCurrentTab,
   dismissEntryPopups,
@@ -70,6 +71,9 @@ export class NaverPublisher implements NaverPublisherApi {
     await dismissEntryPopups(ctx);
     await fillTitle(ctx, draft.title);
     await fillBodyAndImages(ctx, draft, input);
+    // 장소는 본문 맨 끝(현재 캐럿 위치)에 붙는다 — 사용자가 입력한 값으로 검색해 1번째
+    // 결과를 고르고, 결과가 없으면 장소 없이 그대로 진행한다.
+    await attachPlace(ctx, input.place);
     await setThumbnail(ctx, draft, input);
     // 실측: 카테고리·태그는 본문 화면이 아니라 발행 설정 패널 안에 있다. 패널을 열어 둔
     // 채로 미리보기까지만 하고 멈추므로, 사람이 승인하기 전에는 발행되지 않는다.

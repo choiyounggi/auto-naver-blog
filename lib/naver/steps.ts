@@ -23,6 +23,17 @@ import {
   IMAGE_TOOLBAR_BUTTON,
   POPUP_DRAFT_RESTORE_CANCEL,
   POPUP_HELP_PANEL_CLOSE,
+  PLACE_ADD_BUTTON,
+  PLACE_CLOSE_BUTTON,
+  PLACE_COMPONENT,
+  PLACE_CONFIRM_BUTTON,
+  PLACE_POPUP,
+  PLACE_RESULT_ADDRESS,
+  PLACE_RESULT_ITEM,
+  PLACE_RESULT_TITLE,
+  PLACE_SEARCH_BUTTON,
+  PLACE_SEARCH_INPUT,
+  PLACE_TOOLBAR_BUTTON,
   PUBLISH_CONFIRM_BUTTON,
   PUBLISH_PANEL_OPEN_BUTTON,
   TAG_INPUT,
@@ -67,13 +78,6 @@ function parseJsonStdout<T>(stepName: string, stdout: string): T {
     throw new EvaluationFailedError(stepName, `evaluate 응답을 JSON으로 파싱하지 못함: ${stdout.slice(0, 300)}`);
   }
   return parsed;
-}
-
-/** 글 맨 끝에 붙일 장소 문단. 입력이 비어 있으면 null 을 돌려준다(문단을 넣지 않는다). */
-export function buildPlaceText(place: string): string | null {
-  const trimmed = place.trim();
-  if (trimmed === '') return null;
-  return `\n📍 장소\n${trimmed}`;
 }
 
 /** 현재 화면의 접근성 스냅샷 — 실패했을 때 사람이 볼 근거로 쓴다. */
@@ -274,12 +278,6 @@ export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: P
 
   await typeIntoBody(ctx, stepName, draft.outro, { newParagraph: true });
 
-  // 사용자가 입력한 장소는 초안이 아니라 입력값을 그대로 쓴다 — 지어낼 여지가 없다.
-  const placeText = buildPlaceText(input.place);
-  if (placeText !== null) {
-    await typeIntoBody(ctx, stepName, placeText);
-  }
-
   ctx.onProgress?.(`[${stepName}] 본문·이미지 ${input.images.length}장 조립 완료`);
 }
 
@@ -401,6 +399,104 @@ await (async () => {
     );
   }
   ctx.onProgress?.(`[${stepName}] 이미지 ${expectedCount}장째 업로드 확인`);
+}
+
+/**
+ * 글 끝에 장소(위치)를 붙인다. 툴바의 '장소' 로 검색해 **가장 위 결과 1건**을 고른다.
+ *
+ * 실측으로 확인한 것들:
+ * - 검색어 입력칸은 react-autosuggest 라서 키보드 타이핑으로는 한글이 첫 글자만 들어간다
+ *   ("판교역" → "판"). `fill()` 로 값을 한 번에 넣어야 한다.
+ * - Enter 로는 검색이 걸리지 않는다 — 전용 검색 버튼을 눌러야 한다.
+ * - 결과의 '추가' 버튼은 hover 전에는 클릭 가능 판정을 통과하지 못해 DOM 클릭으로 누른다.
+ * - '추가' 뒤 팝업의 '확인' 까지 눌러야 본문에 se-placesMap 컴포넌트가 들어간다.
+ *
+ * 검색 결과가 없으면 팝업만 닫고 장소 없이 진행한다 — 실패로 보지 않는다.
+ */
+export async function attachPlace(ctx: StepCtx, place: string): Promise<void> {
+  const stepName = 'attachPlace';
+  const query = place.trim();
+  if (query === '') {
+    ctx.onProgress?.(`[${stepName}] 장소 입력 없음 — 건너뜀`);
+    return;
+  }
+
+  const js = `
+await (async () => {
+  await ${frameLocator(PLACE_TOOLBAR_BUTTON)}.first().click();
+
+  const popup = ${frameLocator(PLACE_POPUP)};
+  let popupOpen = false;
+  for (let attempt = 0; attempt < 30 && !popupOpen; attempt++) {
+    popupOpen = (await popup.count()) > 0;
+    if (!popupOpen) await sleep(500);
+  }
+  if (!popupOpen) {
+    console.log(JSON.stringify({ popupOpen: false, resultCount: 0, attached: false }));
+    return;
+  }
+
+  await ${frameLocator(PLACE_SEARCH_INPUT)}.first().fill(${JSON.stringify(query)});
+  await ${frameLocator(PLACE_SEARCH_BUTTON)}.first().click();
+
+  const items = ${frameLocator(PLACE_RESULT_ITEM)};
+  let resultCount = 0;
+  for (let attempt = 0; attempt < 30 && resultCount === 0; attempt++) {
+    await sleep(500);
+    resultCount = await items.count();
+  }
+
+  if (resultCount === 0) {
+    await ${frameLocator(`${PLACE_POPUP} ${PLACE_CLOSE_BUTTON}`)}.first().evaluate((el) => el.click());
+    await sleep(1000);
+    console.log(JSON.stringify({ popupOpen: true, resultCount: 0, attached: false }));
+    return;
+  }
+
+  const readText = async (selector) => {
+    const locator = items.first().locator(selector);
+    return (await locator.count()) > 0 ? ((await locator.first().textContent()) || '').trim() : '';
+  };
+  const firstName = await readText(${JSON.stringify(PLACE_RESULT_TITLE)});
+  const firstAddress = await readText(${JSON.stringify(PLACE_RESULT_ADDRESS)});
+  await items.first().locator(${JSON.stringify(PLACE_ADD_BUTTON)}).evaluate((el) => el.click());
+  await sleep(1500);
+  await ${frameLocator(`${PLACE_POPUP} ${PLACE_CONFIRM_BUTTON}`)}.first().evaluate((el) => el.click());
+
+  const inserted = ${frameLocator(PLACE_COMPONENT)};
+  let attached = false;
+  for (let attempt = 0; attempt < 30 && !attached; attempt++) {
+    await sleep(500);
+    attached = (await inserted.count()) > 0;
+  }
+  console.log(JSON.stringify({ popupOpen: true, resultCount, attached, firstName, firstAddress }));
+})();
+`;
+
+  const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_UPLOAD_MS);
+  const parsed = parseJsonStdout<{
+    popupOpen?: boolean;
+    resultCount?: number;
+    attached?: boolean;
+    firstName?: string;
+    firstAddress?: string;
+  }>(stepName, stdout);
+
+  if (parsed.popupOpen !== true) {
+    throw new ElementNotFoundError(stepName, `장소 검색 팝업(${PLACE_POPUP})`, '(팝업이 열리지 않음)');
+  }
+  if (parsed.resultCount === 0) {
+    ctx.onProgress?.(`[${stepName}] "${query}" 검색 결과 없음 — 장소 없이 진행합니다`);
+    return;
+  }
+  if (parsed.attached !== true) {
+    throw new EvaluationFailedError(stepName, `장소를 고른 뒤에도 본문에 장소 블록이 들어가지 않았습니다 (검색어="${query}")`);
+  }
+  const chosen = parsed.firstName !== undefined && parsed.firstName !== '' ? parsed.firstName : query;
+  const address = parsed.firstAddress !== undefined && parsed.firstAddress !== '' ? ` (${parsed.firstAddress})` : '';
+  ctx.onProgress?.(
+    `[${stepName}] 장소 추가: ${chosen}${address} — "${query}" 검색 결과 ${parsed.resultCount}건 중 1번째`,
+  );
 }
 
 /**

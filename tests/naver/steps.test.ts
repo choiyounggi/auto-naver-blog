@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } from '@/lib/naver/errors';
 import {
-  buildPlaceText,
+  attachPlace,
   capturePreview,
   closeCurrentTab,
   dismissEntryPopups,
@@ -46,6 +46,9 @@ interface FakeOptions {
   imageCount?: number;
   visibleCount?: number;
   publishUrl?: string | null;
+  placePopupOpen?: boolean;
+  placeResultCount?: number;
+  placeAttached?: boolean;
   failAll?: string;
 }
 
@@ -63,6 +66,18 @@ function fakeRepl(opts: FakeOptions = {}) {
       calls.push(js);
       if (opts.failAll !== undefined) return fail(opts.failAll);
 
+      if (js.includes('se-map-toolbar-button')) {
+        const popupOpen = opts.placePopupOpen ?? true;
+        const resultCount = popupOpen ? (opts.placeResultCount ?? 1) : 0;
+        return ok(
+          JSON.stringify({
+            popupOpen,
+            resultCount,
+            attached: resultCount > 0 && (opts.placeAttached ?? true),
+            firstName: '판교역 신분당선',
+          }),
+        );
+      }
       if (js.includes(PUBLISH_CLICK_MARKER)) {
         return ok(JSON.stringify({ resultUrl: opts.publishUrl ?? null }));
       }
@@ -259,44 +274,66 @@ describe('fillBodyAndImages — 에러/경계값', () => {
   });
 });
 
-describe('fillBodyAndImages — 장소', () => {
-  test('정상: 장소를 입력하면 본문 마지막에 붙는다', async () => {
-    const { repl, calls } = fakeRepl();
-    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '서울 성수동 파스타집' }));
-    const typedCalls = calls.filter((js) => js.includes('keyboard.type'));
-    const last = typedCalls[typedCalls.length - 1];
-    expect(last).toContain('📍 장소');
-    expect(last).toContain('서울 성수동 파스타집');
+// 실측(2026-08-29): 장소는 본문에 텍스트로 적는 대신 에디터의 '장소' 검색으로 붙인다.
+// 검색어 입력칸이 react-autosuggest 라 키보드 타이핑으로는 한글이 첫 글자만 들어가서
+// fill() 을 쓰고, 결과의 '추가' 버튼은 hover 전 클릭 판정을 통과하지 못해 DOM 클릭한다.
+describe('attachPlace — 정상', () => {
+  test('검색 결과 1번째를 고르고 본문에 장소 블록을 넣는다', async () => {
+    const { repl, calls } = fakeRepl({ placeResultCount: 3, placeAttached: true });
+    await expect(attachPlace({ repl }, '판교역')).resolves.toBeUndefined();
+    const js = calls.find((call) => call.includes('se-map-toolbar-button'));
+    expect(js).toContain('"판교역"');
+    expect(js).toContain('items.first()');
   });
 
-  test('경계값: 장소가 비어 있으면 장소 문단을 넣지 않는다', async () => {
-    const { repl, calls } = fakeRepl();
-    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '' }));
-    expect(calls.some((js) => js.includes('📍'))).toBe(false);
+  test('검색어는 타이핑이 아니라 fill() 로 한 번에 넣는다(한글 잘림 회귀)', async () => {
+    const { repl, calls } = fakeRepl({ placeResultCount: 1, placeAttached: true });
+    await attachPlace({ repl }, '판교역');
+    const js = calls.find((call) => call.includes('se-map-toolbar-button'));
+    expect(js).toContain('.fill("판교역")');
+    expect(js).not.toContain('keyboard.type');
   });
 
-  test('경계값: 공백뿐인 장소도 문단을 만들지 않는다', async () => {
-    const { repl, calls } = fakeRepl();
-    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1, { place: '   ' }));
-    expect(calls.some((js) => js.includes('📍'))).toBe(false);
+  test('경계값: 앞뒤 공백은 다듬어 검색한다', async () => {
+    const { repl, calls } = fakeRepl({ placeResultCount: 1, placeAttached: true });
+    await attachPlace({ repl }, '  판교역  ');
+    expect(calls.find((call) => call.includes('se-map-toolbar-button'))).toContain('.fill("판교역")');
   });
 });
 
-describe('buildPlaceText', () => {
-  test('정상: 장소를 글 끝 문단으로 만든다', () => {
-    expect(buildPlaceText('서울 성수동 파스타집')).toBe('\n📍 장소\n서울 성수동 파스타집');
+describe('attachPlace — 결과 없음/생략', () => {
+  test('검색 결과가 없으면 팝업만 닫고 실패하지 않는다', async () => {
+    const { repl } = fakeRepl({ placeResultCount: 0, placeAttached: false });
+    await expect(attachPlace({ repl }, '없는장소')).resolves.toBeUndefined();
   });
 
-  test('경계값: 빈 문자열이면 null 이다', () => {
-    expect(buildPlaceText('')).toBeNull();
+  test('경계값: 장소가 비어 있으면 브라우저를 건드리지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await attachPlace({ repl }, '');
+    expect(calls).toHaveLength(0);
   });
 
-  test('경계값: 공백뿐이면 null 이다', () => {
-    expect(buildPlaceText('   \n ')).toBeNull();
+  test('경계값: 공백뿐이면 브라우저를 건드리지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await attachPlace({ repl }, '   ');
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('attachPlace — 에러', () => {
+  test('팝업이 열리지 않으면 실패한다', async () => {
+    const { repl } = fakeRepl({ placePopupOpen: false });
+    await expect(attachPlace({ repl }, '판교역')).rejects.toThrow(ElementNotFoundError);
   });
 
-  test('경계값: 앞뒤 공백을 다듬어 넣는다', () => {
-    expect(buildPlaceText('  성수동  ')).toBe('\n📍 장소\n성수동');
+  test('결과를 골랐는데 장소 블록이 안 들어가면 실패한다', async () => {
+    const { repl } = fakeRepl({ placeResultCount: 2, placeAttached: false });
+    await expect(attachPlace({ repl }, '판교역')).rejects.toThrow(/장소 블록이 들어가지 않았습니다/);
+  });
+
+  test('evaluate 가 실패하면 던진다', async () => {
+    const { repl } = fakeRepl({ failAll: '팝업 죽음' });
+    await expect(attachPlace({ repl }, '판교역')).rejects.toThrow(EvaluationFailedError);
   });
 });
 

@@ -80,7 +80,7 @@ const input = {
   jobId,
   category: process.env.E2E_CATEGORY ?? '맛집 뿌시기',
   highlights: 'e2e 자동화 점검용입니다.',
-  place: '테스트 장소',
+  place: process.env.E2E_PLACE ?? '판교역',
   images: [
     {
       id: imageId,

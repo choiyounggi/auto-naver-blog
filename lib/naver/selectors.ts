@@ -50,6 +50,43 @@ export const IMAGE_TOOLBAR_BUTTON = '.se-image-toolbar-button';
 export const UPLOADED_IMAGE = 'img.se-image-resource';
 
 // ---------------------------------------------------------------------------
+// 장소(위치) 첨부 — 툴바 '장소' 를 누르면 검색 팝업이 열린다
+// ---------------------------------------------------------------------------
+
+// [실측] 툴바의 '장소' 버튼.
+export const PLACE_TOOLBAR_BUTTON = '.se-map-toolbar-button';
+
+// [실측] 장소 검색 팝업. 다른 팝업과 구분해야 하므로 이 컨테이너 안으로 범위를 좁힌다.
+export const PLACE_POPUP = '.se-popup-placesMap';
+
+// [실측] 검색어 입력칸. react-autosuggest 로 만들어져 있어 키보드 타이핑으로는 한글이
+// 첫 글자만 들어간다("판교역" → "판") — locator.fill() 로 값을 한 번에 넣어야 한다.
+export const PLACE_SEARCH_INPUT = 'input.react-autosuggest__input';
+
+// [실측] Enter 로는 검색이 걸리지 않는다 — 전용 검색 버튼을 눌러야 한다.
+export const PLACE_SEARCH_BUTTON = 'button.se-place-search-button';
+
+// [실측] 검색 결과 항목. 결과가 없으면 0개이고 "검색 결과가 없습니다." 문구가 뜬다.
+export const PLACE_RESULT_ITEM = 'li.se-place-map-search-result-item';
+
+// [실측] 각 결과의 '추가' 버튼. hover 전에는 Playwright 의 클릭 가능 판정을 통과하지
+// 못하므로 DOM 클릭으로 누른다.
+export const PLACE_ADD_BUTTON = 'button.se-place-add-button';
+
+// [실측] 팝업 하단의 '확인' — 이걸 눌러야 본문에 se-placesMap 컴포넌트가 삽입된다.
+export const PLACE_CONFIRM_BUTTON = 'button.se-popup-button-confirm';
+
+// [실측] 팝업 닫기. 검색 결과가 없을 때 이걸로 닫고 장소 없이 진행한다.
+export const PLACE_CLOSE_BUTTON = 'button.se-popup-close-button';
+
+// [실측] 결과 항목 안의 장소 이름·주소. 진행 로그에 무엇이 골라졌는지 남기기 위해 읽는다.
+export const PLACE_RESULT_TITLE = '.se-place-map-search-result-title';
+export const PLACE_RESULT_ADDRESS = '.se-place-map-search-result-address';
+
+// [실측] 삽입된 장소 컴포넌트.
+export const PLACE_COMPONENT = '.se-component.se-placesMap';
+
+// ---------------------------------------------------------------------------
 // 발행 패널 (툴바 '발행' 을 눌러야 나타난다)
 // ---------------------------------------------------------------------------
 

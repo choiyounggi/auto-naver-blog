@@ -129,10 +129,13 @@ export function UploadForm({ onCreated, categories }: UploadFormProps) {
           className={styles.input}
           value={place}
           onChange={(e) => setPlace(e.target.value)}
-          placeholder="예: 서울 성수동 ○○파스타"
+          placeholder="예: 판교역, 성수동 ○○파스타"
           disabled={submitting}
         />
-        <p className={styles.hint}>적으면 글 마지막에 장소로 붙습니다. 비워 두면 넣지 않습니다.</p>
+        <p className={styles.hint}>
+          적으면 네이버 장소 검색으로 찾아 글 마지막에 지도로 붙습니다. 검색 결과가 여러 건이면 가장
+          위 1건을 고르고, 결과가 없으면 장소 없이 발행합니다.
+        </p>
       </div>
 
       <div className={styles.field}>
