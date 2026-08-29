@@ -3,6 +3,7 @@ import { AsideRepl } from '@/lib/aside/repl';
 import { NaverSession } from '@/lib/aside/naver-session';
 import { readSetupState } from '@/lib/aside/blog-meta';
 import { readLoginPersistence } from '@/lib/aside/login-persistence';
+import { readVerifyCache, writeVerifyCache } from '@/lib/aside/login-verify-cache';
 import { ENV_FILE_PATH, loadConfig } from '@/lib/config';
 import type { AppConfig } from '@/lib/config';
 
@@ -50,18 +51,30 @@ export async function GET(request: Request): Promise<Response> {
   // 쿠키 파일만 읽으면 되므로 항상 함께 준다 — 로그인이 오래 갈지 화면에서 알려주기 위함이다.
   const persistence = await readLoginPersistence(config.cookieFile);
 
-  const verify = new URL(request.url).searchParams.get('verify') === '1';
+  const params = new URL(request.url).searchParams;
+  const verify = params.get('verify') === '1';
   // 파일 기준으로도 준비가 안 됐으면 브라우저를 띄울 이유가 없다.
   if (!verify || !state.ready) {
     return NextResponse.json({ ...state, loggedIn: null, reason: null, persistence });
   }
 
-  inFlightVerify = inFlightVerify ?? verifyLogin(config);
+  // 화면을 새로고침할 때마다 몇 초씩 기다리지 않도록 짧게 캐시한다.
+  // `fresh=1` 이면(온보딩의 '상태 다시 확인') 캐시를 무시하고 지금 확인한다.
+  const now = Date.now();
+  const skipCache = params.get('fresh') === '1';
+  const cached = skipCache ? null : readVerifyCache(now);
+
   let result: { loggedIn: boolean; reason: string | null };
-  try {
-    result = await inFlightVerify;
-  } finally {
-    inFlightVerify = null;
+  if (cached) {
+    result = cached;
+  } else {
+    inFlightVerify = inFlightVerify ?? verifyLogin(config);
+    try {
+      result = await inFlightVerify;
+    } finally {
+      inFlightVerify = null;
+    }
+    writeVerifyCache(result, Date.now());
   }
 
   return NextResponse.json({

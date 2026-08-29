@@ -3,6 +3,7 @@ import { AsideRepl } from '@/lib/aside/repl';
 import { LoginTimeoutError, runNaverLoginFlow } from '@/lib/aside/login-flow';
 import { NaverSession } from '@/lib/aside/naver-session';
 import { readSetupState } from '@/lib/aside/blog-meta';
+import { clearVerifyCache, writeVerifyCache } from '@/lib/aside/login-verify-cache';
 import { ENV_FILE_PATH, loadConfig } from '@/lib/config';
 
 // 사람이 로그인을 마칠 때까지 최대 5분 기다린다 — Next 기본 응답 제한을 넘기지 않도록
@@ -29,6 +30,7 @@ export async function POST(): Promise<Response> {
 
     try {
       await repl.start();
+      clearVerifyCache();
       const result = await runNaverLoginFlow(repl, session, {
         envPath: ENV_FILE_PATH,
         cookieFile: config.cookieFile,
@@ -38,7 +40,8 @@ export async function POST(): Promise<Response> {
         cookieFile: config.cookieFile,
         envOverrides: { blogId: config.naverBlogId },
       });
-      // 방금 로그인을 확인하고 온 길이므로 라이브 확인 결과도 함께 채워 준다.
+      // 방금 로그인을 확인하고 온 길이므로 캐시도 그 결과로 갱신한다.
+      writeVerifyCache({ loggedIn: true, reason: null }, Date.now());
       return NextResponse.json({
         ...state,
         loggedIn: true,

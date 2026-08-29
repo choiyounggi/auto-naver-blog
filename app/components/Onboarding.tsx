@@ -45,7 +45,7 @@ export function Onboarding({ state, loggedIn = null, onState }: OnboardingProps)
     setChecking(true);
     setError(null);
     try {
-      const response = await fetch('/api/setup?verify=1');
+      const response = await fetch('/api/setup?verify=1&fresh=1');
       if (!response.ok) throw new Error(`상태를 불러오지 못했습니다 (${response.status})`);
       onState((await response.json()) as SetupResponse);
     } catch (err) {

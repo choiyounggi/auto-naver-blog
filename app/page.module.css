@@ -68,3 +68,9 @@
 .resetButton:hover {
   background: var(--paper-sunken);
 }
+
+/* 로그인 라이브 확인 중 잠깐 뜨는 안내 — 오류가 아니므로 경고처럼 보이지 않게 한다 */
+.checking {
+  font-size: 0.8125rem;
+  color: var(--ink-dim);
+}

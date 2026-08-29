@@ -92,7 +92,7 @@ export default function Home() {
 
       {setupError && <p className={styles.warning}>{setupError}</p>}
 
-      {!job && verifying && <p className={styles.warning}>네이버 로그인 상태를 확인하는 중입니다…</p>}
+      {!job && verifying && <p className={styles.checking}>네이버 로그인 상태를 확인하는 중…</p>}
 
       {!job && setup !== null && !setup.ready && (
         <Onboarding state={setup} loggedIn={setup.loggedIn} onState={setSetup} />
