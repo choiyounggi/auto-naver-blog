@@ -1,0 +1,40 @@
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-4) var(--space-6);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.text {
+  flex: 1 1 320px;
+  color: var(--ink-dim);
+}
+
+.button {
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--paper-sunken);
+}
+
+.button:disabled {
+  opacity: 0.6;
+}
+
+.error {
+  flex-basis: 100%;
+  color: var(--ink);
+}

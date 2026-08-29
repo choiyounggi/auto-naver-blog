@@ -194,6 +194,16 @@ export async function writeBlogMetaEnv(envPath: string, meta: BlogMeta): Promise
   return { written, skipped };
 }
 
+/**
+ * `/api/setup` 응답. 파일 기준 상태(SetupState)에 라이브 로그인 확인 결과를 덧붙인 것이다 —
+ * `loggedIn` 이 null 이면 확인하지 않았다는 뜻(`?verify=1` 없이 부른 경우).
+ */
+export type SetupResponse = SetupState & {
+  loggedIn: boolean | null;
+  reason: string | null;
+  persistence?: { keepLoggedIn: boolean; expiresAt: string | null };
+};
+
 export interface SetupState {
   /** 업로드 화면을 열어도 되는 상태인가 (쿠키가 있고 블로그 아이디를 안다) */
   ready: boolean;

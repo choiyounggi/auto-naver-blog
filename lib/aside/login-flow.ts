@@ -18,6 +18,13 @@ export interface LoginFlowOptions {
   envPath: string;
   /** 로그인이 영속인지 판정하려고 읽는다. 주지 않으면 판정을 건너뛴다. */
   cookieFile?: string;
+  /**
+   * 이미 로그인돼 있어도 먼저 로그아웃하고 처음부터 다시 로그인한다.
+   *
+   * '로그인 상태 유지' 체크박스는 로그인 화면에서만 켤 수 있다. 이미 로그인된 상태에서는
+   * 손댈 수 없으므로, 세션 쿠키로 로그인된 것을 영속 로그인으로 바꾸려면 이 경로가 필요하다.
+   */
+  forceRelogin?: boolean;
   pollIntervalMs?: number;
   loginTimeoutMs?: number;
   /** 사람에게 보여줄 진행 메시지 — CLI 는 콘솔에, API 는 무시한다 */
@@ -59,6 +66,16 @@ await (async () => {
 const GO_TO_MY_BLOG_JS = `
 await (async () => {
   await page.goto(${JSON.stringify(MY_BLOG_URL)}, { waitUntil: 'domcontentloaded' });
+  console.log(JSON.stringify({ url: page.url() }));
+})();
+`;
+
+// 네이버 로그아웃. 브라우저 쪽 로그인을 먼저 끊어야 로그인 화면이 뜨고, 그래야
+// '로그인 상태 유지' 를 켤 수 있다.
+const LOGOUT_JS = `
+await (async () => {
+  await openTab('https://nid.naver.com/nidlogin.logout');
+  await sleep(2500);
   console.log(JSON.stringify({ url: page.url() }));
 })();
 `;
@@ -113,6 +130,14 @@ export async function runNaverLoginFlow(
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const loginTimeoutMs = options.loginTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
   const notify = options.onMessage ?? (() => {});
+
+  if (options.forceRelogin === true) {
+    notify('기존 로그인을 끊고 처음부터 다시 로그인합니다.');
+    const loggedOut = await repl.evaluate(LOGOUT_JS);
+    if (!loggedOut.ok) {
+      throw new Error(`로그아웃에 실패했습니다: ${loggedOut.error ?? 'unknown error'}`);
+    }
+  }
 
   const opened = await repl.evaluate(OPEN_MY_BLOG_JS);
   if (!opened.ok) {

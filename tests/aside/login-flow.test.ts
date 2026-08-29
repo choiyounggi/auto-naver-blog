@@ -28,6 +28,10 @@ function scriptedRepl(urls: (string | null)[], overrides: { open?: AsideEvalResu
     async dispose() {},
     async evaluate(js: string): Promise<AsideEvalResult> {
       calls.push(js);
+      // 로그아웃도 openTab 을 쓰므로 openTab 분기보다 먼저 걸러야 URL 시퀀스를 소비하지 않는다.
+      if (js.includes('nidlogin.logout')) {
+        return ok(JSON.stringify({ url: 'https://nid.naver.com/nidlogin.login' }));
+      }
       if (js.includes('openTab')) {
         if (overrides.open) return overrides.open;
         const url = urls[index++] ?? null;
@@ -217,5 +221,66 @@ describe("runNaverLoginFlow — '로그인 상태 유지'", () => {
     const result = await runNaverLoginFlow(repl, fakeSession(), { envPath });
 
     expect(result.persistence).toEqual({ keepLoggedIn: false, expiresAt: null });
+  });
+});
+
+
+// 실측(2026-08-29): 브라우저에서 로그아웃해도 이 앱은 저장된 쿠키를 다시 복원해 로그인
+// 상태로 되돌린다. 그래서 '로그인 상태 유지' 를 켜고 새로 로그인하려면 로그아웃부터
+// 명시적으로 해야 한다.
+describe('runNaverLoginFlow — 강제 재로그인', () => {
+  test('forceRelogin 이면 로그아웃을 먼저 하고 로그인 화면부터 시작한다', async () => {
+    const { repl, calls } = scriptedRepl([
+      'https://nid.naver.com/nidlogin.login',
+      'https://blog.naver.com/dev_king',
+      'https://blog.naver.com/dev_king',
+    ]);
+
+    const result = await runNaverLoginFlow(repl, fakeSession(), {
+      envPath,
+      pollIntervalMs: 1,
+      forceRelogin: true,
+    });
+
+    const logoutIndex = calls.findIndex((js) => js.includes('nidlogin.logout'));
+    const openIndex = calls.findIndex((js) => js.includes('openTab') && js.includes('MyBlog.naver'));
+    expect(logoutIndex).toBeGreaterThanOrEqual(0);
+    expect(logoutIndex).toBeLessThan(openIndex);
+    expect(result.alreadyLoggedIn).toBe(false);
+  });
+
+  test("forceRelogin 이면 '로그인 상태 유지' 를 켜는 단계도 거친다", async () => {
+    const { repl, calls } = scriptedRepl([
+      'https://nid.naver.com/nidlogin.login',
+      'https://blog.naver.com/dev_king',
+      'https://blog.naver.com/dev_king',
+    ]);
+
+    await runNaverLoginFlow(repl, fakeSession(), { envPath, pollIntervalMs: 1, forceRelogin: true });
+
+    expect(calls.some((js) => js.includes('loginStay'))).toBe(true);
+  });
+
+  test('기본값(forceRelogin 없음)에서는 로그아웃하지 않는다', async () => {
+    const { repl, calls } = scriptedRepl(['https://blog.naver.com/dev_king', 'https://blog.naver.com/dev_king']);
+
+    await runNaverLoginFlow(repl, fakeSession(), { envPath });
+
+    expect(calls.some((js) => js.includes('nidlogin.logout'))).toBe(false);
+  });
+
+  test('에러: 로그아웃 자체가 실패하면 사유를 담아 던진다', async () => {
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate(js: string): Promise<AsideEvalResult> {
+        if (js.includes('nidlogin.logout')) return fail('로그아웃 실패');
+        return ok('{}');
+      },
+    };
+
+    await expect(
+      runNaverLoginFlow(repl, fakeSession(), { envPath, forceRelogin: true }),
+    ).rejects.toThrow('로그아웃 실패');
   });
 });

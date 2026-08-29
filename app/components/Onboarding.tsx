@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import type { SetupState } from '@/lib/aside/blog-meta';
+import type { SetupResponse, SetupState } from '@/lib/aside/blog-meta';
 import type { LoginPersistence } from '@/lib/aside/login-persistence';
 import styles from './Onboarding.module.css';
 
 interface OnboardingProps {
   state: SetupState;
+  /** 라이브 확인 결과. false 면 저장된 쿠키는 있는데 로그인이 풀린 것이다. */
+  loggedIn?: boolean | null;
   /** 로그인이 끝났거나 상태를 다시 읽었을 때 부모에게 알린다 */
-  onState: (state: SetupState) => void;
+  onState: (state: SetupResponse) => void;
 }
 
-export function Onboarding({ state, onState }: OnboardingProps) {
+export function Onboarding({ state, loggedIn = null, onState }: OnboardingProps) {
   const [waiting, setWaiting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +30,7 @@ export function Onboarding({ state, onState }: OnboardingProps) {
       if (!response.ok) {
         throw new Error(body?.error ?? `로그인에 실패했습니다 (${response.status})`);
       }
-      const result = body as SetupState & { persistence?: LoginPersistence };
+      const result = body as SetupResponse & { persistence?: LoginPersistence };
       setPersistence(result.persistence ?? null);
       onState(result);
     } catch (err) {
@@ -43,9 +45,9 @@ export function Onboarding({ state, onState }: OnboardingProps) {
     setChecking(true);
     setError(null);
     try {
-      const response = await fetch('/api/setup');
+      const response = await fetch('/api/setup?verify=1');
       if (!response.ok) throw new Error(`상태를 불러오지 못했습니다 (${response.status})`);
-      onState((await response.json()) as SetupState);
+      onState((await response.json()) as SetupResponse);
     } catch (err) {
       setError(err instanceof Error ? err.message : '상태를 불러오지 못했습니다.');
     } finally {
@@ -56,6 +58,13 @@ export function Onboarding({ state, onState }: OnboardingProps) {
   return (
     <section className={styles.card}>
       <h2 className={styles.title}>시작하기 전에 — 네이버 로그인</h2>
+
+      {state.hasCookies && loggedIn === false && (
+        <p className={styles.error}>
+          저장된 로그인 정보가 있지만 네이버에서 로그아웃됐거나 세션이 만료됐습니다. 아래에서 다시
+          로그인해 주세요.
+        </p>
+      )}
 
       <p className={styles.lead}>
         글을 쓰려면 먼저 네이버에 로그인해야 합니다. 로그인은 <strong>영기님이 직접</strong> Aside
