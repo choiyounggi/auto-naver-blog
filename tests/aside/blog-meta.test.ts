@@ -195,6 +195,57 @@ describe('upsertEnv — 경계값', () => {
   });
 });
 
+// 실측 회귀(2026-08-29): 카테고리 링크가 하나라도 보이면 즉시 읽던 시절, 사이드바가
+// 아직 그려지는 중이라 2개 중 1개만 .env 에 기록된 적이 있다. 이제는 개수가 연속 두 번
+// 같아질 때까지 기다린 뒤 읽는다.
+// 실측 회귀(2026-08-29): 카테고리 링크가 하나라도 보이면 즉시 읽던 시절, 사이드바가 아직
+// 그려지는 중이라 2개 중 1개만 .env 에 기록됐다. 이제는 링크 개수가 연속 두 번 같아질
+// 때까지(=렌더링이 멎을 때까지) 기다린 뒤 읽는다.
+//
+// 안정화 루프 자체는 브라우저 안에서 도는 코드라 가짜 REPL 로 재현할 수 없다 — 여기서는
+// 그 루프가 페이로드에 실제로 들어 있는지만 고정하고, 동작은 라이브에서 확인했다
+// (카테고리 2개가 모두 .env 에 기록되는 것을 재실행으로 확인).
+describe('discoverBlogMeta — 점진 렌더링 대비', () => {
+  test('카테고리 조회 페이로드에 안정화 조건이 들어 있다(첫 링크에서 멈추지 않는다)', async () => {
+    const calls: string[] = [];
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate(js: string): Promise<AsideEvalResult> {
+        calls.push(js);
+        if (js.includes('MyBlog.naver')) return ok('{"url":"https://blog.naver.com/dev_king"}');
+        return ok(JSON.stringify({ links: [{ text: '테슬라', href: '?categoryNo=6' }] }));
+      },
+    };
+
+    await discoverBlogMeta(repl);
+
+    const categoryJs = calls.find((js) => js.includes('querySelectorAll'));
+    expect(categoryJs).toContain('current === previous');
+    expect(categoryJs).toContain('countCategories');
+  });
+
+  test('마지막으로 읽은 목록 전체가 결과에 반영된다', async () => {
+    const repl: AsideReplApi = {
+      async start() {},
+      async dispose() {},
+      async evaluate(js: string): Promise<AsideEvalResult> {
+        if (js.includes('MyBlog.naver')) return ok('{"url":"https://blog.naver.com/dev_king"}');
+        return ok(
+          JSON.stringify({
+            links: [
+              { text: '맛집 뿌시기', href: '?categoryNo=7' },
+              { text: '테슬라', href: '?categoryNo=6' },
+            ],
+          }),
+        );
+      },
+    };
+
+    expect((await discoverBlogMeta(repl)).categories).toEqual(['맛집 뿌시기', '테슬라']);
+  });
+});
+
 describe('discoverBlogMeta — 정상', () => {
   test('blogId 와 카테고리를 함께 돌려준다', async () => {
     const repl = fakeRepl({

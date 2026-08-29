@@ -114,8 +114,10 @@ await (async () => {
 
 function buildCategoriesJs(blogId: string): string {
   // 블로그 본문은 `iframe#mainFrame` 안에 렌더링된다 — 프레임이 없으면 문서 자체에서 찾는다.
-  // domcontentloaded 시점에는 mainFrame 안이 아직 비어 있을 수 있으므로, 카테고리 링크가
-  // 나타날 때까지 짧게 다시 읽는다(최대 10초). 그래도 없으면 빈 목록으로 끝낸다.
+  // 실측(2026-08-29): 카테고리 링크가 "하나라도 보이면" 멈추면 목록을 놓친다. 사이드바가
+  // 점진적으로 렌더링돼서, 첫 링크가 뜬 순간 읽으면 일부만 잡힌다(카테고리 2개 중 1개만
+  // .env 에 기록된 적이 있다). 그래서 개수가 **연속 두 번 같아질 때까지**(=렌더링이 멎을
+  // 때까지) 기다린 뒤 읽는다. 최대 10초, 그래도 없으면 빈 목록으로 끝낸다.
   return `
 await (async () => {
   await page.goto('https://blog.naver.com/' + ${JSON.stringify(blogId)}, { waitUntil: 'domcontentloaded' });
@@ -124,8 +126,13 @@ await (async () => {
     const doc = frame && frame.contentDocument ? frame.contentDocument : document;
     return Array.from(doc.querySelectorAll('a')).map((a) => ({ text: (a.textContent || '').trim(), href: a.getAttribute('href') || '' }));
   });
+  const countCategories = (list) => list.filter((l) => l.href.includes('categoryNo=')).length;
   let links = await read();
-  for (let attempt = 0; attempt < 20 && !links.some((l) => l.href.includes('categoryNo=')); attempt++) {
+  let previous = -1;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const current = countCategories(links);
+    if (current > 0 && current === previous) break;
+    previous = current;
     await sleep(500);
     links = await read();
   }
