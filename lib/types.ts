@@ -99,7 +99,11 @@ export const JobStateSchema = z.object({
   id: z.string(),
   phase: JobPhaseSchema,
   input: PostInputSchema,
+  // 사람이 승인 화면에서 고칠 수 있는 초안. 발행할 때 이 내용대로 올라간다.
   draft: PostDraftSchema.nullable(),
+  // 지금 네이버 에디터에 실제로 채워져 있는 초안. draft 와 다르면 사람이 고쳤다는 뜻이라,
+  // 발행 전에 에디터를 고친 내용대로 다시 채운다. default 로 이 필드가 없던 잡 파일도 읽힌다.
+  editorDraft: PostDraftSchema.nullable().default(null),
   preview: z
     .object({
       screenshotPath: z.string(),

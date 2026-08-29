@@ -1,3 +1,4 @@
+import { draftNeedsRefill } from './draft-diff';
 import { getServices } from './services';
 import type { JobStore } from './store';
 import type { PublishResult } from '../types';
@@ -62,7 +63,9 @@ async function runJobSteps(store: JobStore, jobId: string): Promise<void> {
     return;
   }
 
-  await store.patch(jobId, { preview });
+  // 지금 에디터에 채워진 초안을 기록해 둔다 — 사람이 승인 화면에서 고치면 이것과 달라지고,
+  // 그때는 발행 전에 에디터를 고친 내용대로 다시 채운다.
+  await store.patch(jobId, { preview, editorDraft: draft });
   await store.transition(jobId, 'awaiting_approval', '사람 승인 대기 중');
   // 여기서 끝난다 — publisher.publish()는 절대 호출하지 않는다.
 }
@@ -78,6 +81,30 @@ export async function approveAndPublish(store: JobStore, jobId: string): Promise
     throw new Error(
       `approveAndPublish: job '${jobId}' is not awaiting approval (current phase: '${state.phase}')`,
     );
+  }
+
+  // 사람이 승인 화면에서 고쳤으면, 그 내용대로 에디터를 다시 채운 뒤 발행한다 —
+  // 화면에서 본 그대로 올라가야 한다. 고친 게 없으면 다시 채우지 않는다(사진 재업로드가
+  // 없으니 훨씬 빠르다).
+  if (state.draft !== null && draftNeedsRefill(state.draft, state.editorDraft)) {
+    // 단계는 awaiting_approval 그대로 둔다 — 이 잡의 단계 사슬은 한 방향으로만 흐르게
+    // 되어 있고(store.isLegalTransition), 그 불변식을 이 경로 때문에 느슨하게 만들지 않는다.
+    // 진행 상황은 로그로 알린다.
+    await store.appendLog(jobId, '수정한 내용으로 에디터를 다시 채우는 중');
+    const onProgress = (message: string) => {
+      store.appendLog(jobId, message).catch((err: unknown) => {
+        console.error(`approveAndPublish: appendLog failed for job '${jobId}':`, err);
+      });
+    };
+    try {
+      // 기존 에디터 탭을 정리하고 처음부터 다시 채운다.
+      await publisher.abort();
+      const preview = await publisher.fillEditor(state.draft, state.input, onProgress);
+      await store.patch(jobId, { preview, editorDraft: state.draft });
+    } catch (err) {
+      await failJob(store, jobId, 'refillEditor', err);
+      throw err;
+    }
   }
 
   await store.transition(jobId, 'publishing', '발행 시작');

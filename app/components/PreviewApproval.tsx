@@ -1,45 +1,138 @@
 'use client';
 
-import { useState } from 'react';
-import type { JobState } from '@/lib/types';
+import { useEffect, useState } from 'react';
+import type { ChangeEvent } from 'react';
+import type { ImageBlock, JobState, PostDraft } from '@/lib/types';
 import styles from './PreviewApproval.module.css';
 
 interface PreviewApprovalProps {
   job: JobState;
   onPublished: () => void;
-  /** 미리보기를 다시 찍은 뒤 잡 상태를 새로 읽어오게 한다 */
-  onRefreshed?: () => void;
+  /** 초안을 저장했을 때 잡 상태를 새로 읽어오게 한다 */
+  onSaved?: () => void;
 }
 
-export function PreviewApproval({ job, onPublished, onRefreshed }: PreviewApprovalProps) {
+function moveBlock(blocks: ImageBlock[], from: number, to: number): ImageBlock[] {
+  if (to < 0 || to >= blocks.length) return blocks;
+  const next = [...blocks];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
+ * 승인 화면. 여기서 본 그대로 발행된다 — 글·소제목·태그를 고치고 사진을 넣거나 빼거나
+ * 순서를 바꿀 수 있다. 저장한 내용은 발행할 때 네이버 에디터에 다시 채워진다.
+ */
+export function PreviewApproval({ job, onPublished, onSaved }: PreviewApprovalProps) {
+  const [draft, setDraft] = useState<PostDraft | null>(job.draft);
   const [publishing, setPublishing] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  // 미리보기 이미지를 강제로 다시 받아오기 위한 캐시 무력화 값
-  const [previewVersion, setPreviewVersion] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { draft } = job;
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  // 사진을 추가하면 서버가 준 새 잡 상태로 초안을 맞춘다.
+  useEffect(() => {
+    setDraft(job.draft);
+  }, [job.draft]);
 
   if (!draft) {
-    // phase가 awaiting_approval이면 draft는 항상 채워져 있다 — 방어적 표시일 뿐이다
     return <p className={styles.errorMessage}>초안이 아직 준비되지 않았습니다.</p>;
   }
 
-  async function handleRefresh() {
-    if (refreshing || publishing) return;
-    setRefreshing(true);
+  // 첫 사진이 대표라는 계약을 화면에서도 지킨다.
+  const normalized: PostDraft = { ...draft, thumbnailImageId: draft.blocks[0]?.imageId ?? draft.thumbnailImageId };
+  const dirty = JSON.stringify(normalized) !== JSON.stringify(job.draft);
+
+  function update(patch: Partial<PostDraft>) {
+    setDraft((current) => (current ? { ...current, ...patch } : current));
+    setSavedAt(null);
+  }
+
+  function updateBlock(index: number, patch: Partial<ImageBlock>) {
+    setDraft((current) => {
+      if (!current) return current;
+      const blocks = current.blocks.map((block, i) => (i === index ? { ...block, ...patch } : block));
+      return { ...current, blocks };
+    });
+    setSavedAt(null);
+  }
+
+  function reorder(index: number, delta: number) {
+    setDraft((current) => {
+      if (!current) return current;
+      const blocks = moveBlock(current.blocks, index, index + delta);
+      return { ...current, blocks, thumbnailImageId: blocks[0].imageId };
+    });
+    setSavedAt(null);
+  }
+
+  function removeBlock(index: number) {
+    setDraft((current) => {
+      if (!current || current.blocks.length <= 1) return current;
+      const blocks = current.blocks.filter((_, i) => i !== index);
+      return { ...current, blocks, thumbnailImageId: blocks[0].imageId };
+    });
+    setSavedAt(null);
+  }
+
+  async function handleSave(): Promise<boolean> {
+    setSaving(true);
     setError(null);
     try {
-      const response = await fetch(`/api/jobs/${job.id}/preview`, { method: 'POST' });
+      const response = await fetch(`/api/jobs/${job.id}/draft`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft: normalized }),
+      });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? `미리보기 새로고침 실패 (${response.status})`);
+        throw new Error(body?.error ?? `저장 실패 (${response.status})`);
       }
-      setPreviewVersion((v) => v + 1);
-      onRefreshed?.();
+      setSavedAt(new Date().toLocaleTimeString('ko-KR'));
+      onSaved?.();
+      return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : '미리보기를 다시 찍지 못했습니다.');
+      setError(err instanceof Error ? err.message : '초안을 저장하지 못했습니다.');
+      return false;
     } finally {
-      setRefreshing(false);
+      setSaving(false);
+    }
+  }
+
+  async function handleAddImages(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+
+    setUploading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      for (const file of files) formData.append('images', file);
+      const response = await fetch(`/api/jobs/${job.id}/images`, { method: 'POST', body: formData });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? `사진 추가 실패 (${response.status})`);
+
+      const added = (body.added ?? []) as { id: string }[];
+      setDraft((current) =>
+        current
+          ? {
+              ...current,
+              blocks: [
+                ...current.blocks,
+                ...added.map((image) => ({ imageId: image.id, heading: '', caption: '', altText: '' })),
+              ],
+            }
+          : current,
+      );
+      setSavedAt(null);
+      onSaved?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '사진을 추가하지 못했습니다.');
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -48,6 +141,9 @@ export function PreviewApproval({ job, onPublished, onRefreshed }: PreviewApprov
     setPublishing(true);
     setError(null);
     try {
+      // 고친 게 남아 있으면 먼저 저장한다 — 화면에서 본 그대로 올라가야 한다.
+      if (dirty && !(await handleSave())) return;
+
       const response = await fetch(`/api/jobs/${job.id}/publish`, { method: 'POST' });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
@@ -61,74 +157,157 @@ export function PreviewApproval({ job, onPublished, onRefreshed }: PreviewApprov
     }
   }
 
+  const busy = publishing || saving || uploading;
+
   return (
     <div className={styles.container}>
-      <div className={styles.summary}>
-        <span className={styles.title}>{draft.title}</span>
-        <div className={styles.meta}>
-          <span>주제: {draft.topic}</span>
-          <span className="mono">이미지 {draft.blocks.length}장</span>
-        </div>
-        <div className={styles.tags}>
-          {draft.tags.map((tag) => (
-            <span key={tag} className={styles.tag}>
-              #{tag}
-            </span>
-          ))}
-        </div>
+      <p className={styles.editIntro}>
+        아래가 <strong>실제로 올라갈 내용</strong>입니다. 여기서 고친 그대로 발행됩니다.
+      </p>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="draft-title">
+          제목
+        </label>
+        <input
+          id="draft-title"
+          className={styles.titleInput}
+          value={draft.title}
+          onChange={(e) => update({ title: e.target.value })}
+          disabled={busy}
+        />
       </div>
 
-      <p className={styles.prose}>{draft.intro}</p>
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="draft-intro">
+          여는 글
+        </label>
+        <textarea
+          id="draft-intro"
+          className={styles.textarea}
+          rows={5}
+          value={draft.intro}
+          onChange={(e) => update({ intro: e.target.value })}
+          disabled={busy}
+        />
+      </div>
 
-      {draft.blocks.map((block) => (
+      {draft.blocks.map((block, index) => (
         <div key={block.imageId} className={styles.block}>
-          <span className={styles.blockLabel}>
-            {block.imageId === draft.thumbnailImageId ? '대표 이미지' : '이미지'}
-          </span>
+          <div className={styles.blockHeader}>
+            <span className={styles.blockLabel}>
+              {index === 0 ? `사진 ${index + 1} · 대표` : `사진 ${index + 1}`}
+            </span>
+            <div className={styles.blockActions}>
+              <button type="button" onClick={() => reorder(index, -1)} disabled={busy || index === 0}>
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => reorder(index, 1)}
+                disabled={busy || index === draft.blocks.length - 1}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                onClick={() => removeBlock(index)}
+                disabled={busy || draft.blocks.length <= 1}
+              >
+                빼기
+              </button>
+            </div>
+          </div>
+
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             className={styles.image}
             src={`/api/jobs/${job.id}/images/${block.imageId}`}
             alt={block.altText}
           />
-          <p className={styles.caption}>{block.caption}</p>
+
+          <input
+            className={styles.headingInput}
+            value={block.heading}
+            placeholder="소제목 (선택) — 굵고 큰 글씨로 들어갑니다"
+            onChange={(e) => updateBlock(index, { heading: e.target.value })}
+            disabled={busy}
+          />
+          <textarea
+            className={styles.textarea}
+            rows={4}
+            value={block.caption}
+            onChange={(e) => updateBlock(index, { caption: e.target.value })}
+            disabled={busy}
+          />
         </div>
       ))}
 
-      <p className={styles.prose}>{draft.outro}</p>
-
-      <section className={styles.editNotice}>
-        <p>
-          <strong>고칠 게 있으면 Aside 브라우저에서 직접 고치세요.</strong> 지금 네이버 글쓰기
-          화면이 열려 있고, 발행 설정 창은 닫아 뒀습니다. 글·사진·서식 무엇이든 평소처럼
-          편집하면 되고, 아래 &lsquo;발행&rsquo;을 누르면 <strong>고친 그대로</strong> 올라갑니다.
-        </p>
-        <div className={styles.editActions}>
-          <button
-            className={styles.secondaryButton}
-            type="button"
-            onClick={handleRefresh}
-            disabled={refreshing || publishing}
-          >
-            {refreshing ? '다시 찍는 중…' : '수정한 화면 다시 보기'}
-          </button>
-          <span className={styles.hint}>고친 뒤 눌러서 무엇이 발행될지 확인하세요.</span>
-        </div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          className={styles.previewShot}
-          src={`/api/jobs/${job.id}/preview?v=${previewVersion}`}
-          alt="에디터 미리보기"
+      <div className={styles.addImages}>
+        <label className={styles.label} htmlFor="draft-add-images">
+          사진 추가
+        </label>
+        <input
+          id="draft-add-images"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleAddImages}
+          disabled={busy}
         />
-      </section>
+        {uploading && <span className={styles.hint}>올리는 중…</span>}
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="draft-outro">
+          닫는 글
+        </label>
+        <textarea
+          id="draft-outro"
+          className={styles.textarea}
+          rows={4}
+          value={draft.outro}
+          onChange={(e) => update({ outro: e.target.value })}
+          disabled={busy}
+        />
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="draft-tags">
+          태그 (쉼표로 구분)
+        </label>
+        <input
+          id="draft-tags"
+          className={styles.titleInput}
+          value={draft.tags.join(', ')}
+          onChange={(e) =>
+            update({
+              tags: e.target.value
+                .split(',')
+                .map((tag) => tag.trim())
+                .filter((tag) => tag !== ''),
+            })
+          }
+          disabled={busy}
+        />
+      </div>
 
       {error && <p className={styles.errorMessage}>{error}</p>}
 
       <div className={styles.publishBar}>
-        <button className={styles.publishButton} type="button" onClick={handlePublish} disabled={publishing}>
+        <button className={styles.publishButton} type="button" onClick={handlePublish} disabled={busy}>
           {publishing ? '발행 중…' : '네이버 블로그에 발행'}
         </button>
-        <span>승인 후에만 발행됩니다. 위 내용을 확인한 뒤 눌러주세요.</span>
+        <button className={styles.saveButton} type="button" onClick={handleSave} disabled={busy || !dirty}>
+          {saving ? '저장 중…' : '수정 내용 저장'}
+        </button>
+        <span className={styles.hint}>
+          {dirty
+            ? '고친 내용이 있습니다 — 발행을 누르면 자동으로 저장한 뒤 그 내용대로 올립니다.'
+            : savedAt
+              ? `저장됨 (${savedAt}). 승인 후에만 발행됩니다.`
+              : '승인 후에만 발행됩니다. 위 내용을 확인한 뒤 눌러주세요.'}
+        </span>
       </div>
     </div>
   );

@@ -107,7 +107,7 @@ export default function Home() {
 
       {job && PROGRESS_PHASES.has(job.phase) && <ProgressLog jobId={job.id} onProgress={refreshJob} />}
 
-      {job && job.phase === 'awaiting_approval' && <PreviewApproval job={job} onPublished={refreshJob} onRefreshed={refreshJob} />}
+      {job && job.phase === 'awaiting_approval' && <PreviewApproval job={job} onPublished={refreshJob} onSaved={refreshJob} />}
 
       {job && job.phase === 'published' && (
         <div className={styles.resultCard}>

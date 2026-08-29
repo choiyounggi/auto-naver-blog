@@ -60,6 +60,7 @@ export class JobStore {
       phase: 'created',
       input,
       draft: null,
+      editorDraft: null,
       preview: null,
       result: null,
       error: null,
@@ -124,7 +125,7 @@ export class JobStore {
 
   async patch(
     id: string,
-    fields: Partial<Pick<JobState, 'draft' | 'preview' | 'result' | 'error'>>,
+    fields: Partial<Pick<JobState, 'draft' | 'editorDraft' | 'input' | 'preview' | 'result' | 'error'>>,
   ): Promise<JobState> {
     const state = await this.requireExisting(id);
     const nextState: JobState = { ...state, ...fields, updatedAt: new Date().toISOString() };

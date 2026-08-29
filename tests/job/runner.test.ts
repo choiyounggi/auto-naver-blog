@@ -268,3 +268,46 @@ describe('getServices', () => {
     expect(getServices()).toBe(services);
   });
 });
+
+
+// 승인 화면에서 고친 내용이 그대로 발행되어야 한다 — 고쳤으면 에디터를 다시 채우고,
+// 안 고쳤으면 다시 채우지 않는다(사진 재업로드가 없어 훨씬 빠르다).
+describe('approveAndPublish — 수정 반영', () => {
+  test('정상: 고친 게 없으면 다시 채우지 않고 바로 발행한다', async () => {
+    const jobId = 'job-nochange';
+    await store.create(makeInput(jobId));
+    const draft = makeDraft();
+    await store.patch(jobId, { draft, editorDraft: draft });
+    await store.transition(jobId, 'analyzing', 'x');
+    await store.transition(jobId, 'drafting', 'x');
+    await store.transition(jobId, 'draft_ready', 'x');
+    await store.transition(jobId, 'filling_editor', 'x');
+    await store.transition(jobId, 'awaiting_approval', 'x');
+
+    const before = publisher.fillEditorCallCount;
+    await approveAndPublish(store, jobId);
+
+    expect(publisher.fillEditorCallCount).toBe(before);
+    expect(publisher.publishCallCount).toBe(1);
+  });
+
+  test('정상: 고쳤으면 그 내용으로 다시 채운 뒤 발행한다', async () => {
+    const jobId = 'job-changed';
+    await store.create(makeInput(jobId));
+    const filled = makeDraft();
+    await store.patch(jobId, { draft: { ...filled, title: '사람이 고친 제목' }, editorDraft: filled });
+    await store.transition(jobId, 'analyzing', 'x');
+    await store.transition(jobId, 'drafting', 'x');
+    await store.transition(jobId, 'draft_ready', 'x');
+    await store.transition(jobId, 'filling_editor', 'x');
+    await store.transition(jobId, 'awaiting_approval', 'x');
+
+    const before = publisher.fillEditorCallCount;
+    await approveAndPublish(store, jobId);
+
+    expect(publisher.fillEditorCallCount).toBe(before + 1);
+    expect(publisher.publishCallCount).toBe(1);
+    const state = await store.get(jobId);
+    expect(state?.editorDraft?.title).toBe('사람이 고친 제목');
+  });
+});
