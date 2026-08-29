@@ -44,6 +44,10 @@ export type PostInput = z.infer<typeof PostInputSchema>;
 
 export const ImageBlockSchema = z.object({
   imageId: z.string(),
+  // 사진 위에 붙는 짧은 소제목. 굵게+큰 글씨로 들어가 글의 구조를 드러낸다.
+  // 빈 문자열이면 소제목 없이 문단만 쓴다. default 를 둬서 이 필드가 없던 시절에 저장된
+  // 잡 파일도 그대로 읽힌다.
+  heading: z.string().default(''),
   caption: z.string(),
   altText: z.string(),
 });
@@ -149,6 +153,8 @@ export interface EditorPreview {
 
 export interface NaverPublisherApi {
   fillEditor(draft: PostDraft, input: PostInput, onProgress?: ProgressFn): Promise<EditorPreview>;
+  /** 사람이 브라우저에서 직접 고친 뒤, 무엇이 발행될지 다시 확인하려고 스크린샷만 다시 찍는다. */
+  refreshPreview(input: PostInput): Promise<EditorPreview>;
   publish(): Promise<PublishResult>;
   abort(): Promise<void>;
 }

@@ -17,9 +17,14 @@ import type { AsideReplApi, PostDraft, PostInput, ProgressFn } from '../types';
 import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } from './errors';
 import {
   BODY_MODULE,
+  BOLD_BUTTON,
   CATEGORY_DROPDOWN_BUTTON,
   CATEGORY_OPTION_LABEL,
   EDITOR_FRAME_NAME,
+  FONT_SIZE_BODY,
+  FONT_SIZE_BUTTON,
+  FONT_SIZE_HEADING,
+  FONT_SIZE_OPTION,
   IMAGE_TOOLBAR_BUTTON,
   POPUP_DRAFT_RESTORE_CANCEL,
   POPUP_HELP_PANEL_CLOSE,
@@ -273,7 +278,13 @@ export async function fillBodyAndImages(ctx: StepCtx, draft: PostDraft, input: P
 
   for (let i = 0; i < stagedPaths.length; i++) {
     await insertImage(ctx, stepName, stagedPaths[i], i + 1);
-    await typeIntoBody(ctx, stepName, draft.blocks[i].caption);
+    // 소제목은 사진 바로 아래에 굵고 큰 글씨로 한 줄, 그 다음 줄부터 본문이다.
+    if (draft.blocks[i].heading !== '') {
+      await typeIntoBody(ctx, stepName, draft.blocks[i].heading, { heading: true });
+      await typeIntoBody(ctx, stepName, draft.blocks[i].caption, { newParagraph: true });
+    } else {
+      await typeIntoBody(ctx, stepName, draft.blocks[i].caption);
+    }
   }
 
   await typeIntoBody(ctx, stepName, draft.outro, { newParagraph: true });
@@ -341,19 +352,46 @@ await (async () => {
   await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
 }
 
+// 글자 크기를 바꾼다. 드롭다운을 열고 숫자가 적힌 옵션을 고르는 방식이다.
+function setFontSizeJs(size: string): string {
+  return `
+  await ${frameLocator(FONT_SIZE_BUTTON)}.first().click();
+  await sleep(300);
+  {
+    const options = ${frameLocator(FONT_SIZE_OPTION)};
+    const total = await options.count();
+    for (let i = 0; i < total; i++) {
+      const label = ((await options.nth(i).textContent()) || '').trim();
+      if (label.startsWith(${JSON.stringify(size)})) {
+        await options.nth(i).click();
+        break;
+      }
+    }
+  }
+  await sleep(300);
+`;
+}
+
+const TOGGLE_BOLD_JS = `
+  await ${frameLocator(BOLD_BUTTON)}.first().click();
+  await sleep(200);
+`;
+
 async function typeIntoBody(
   ctx: StepCtx,
   stepName: string,
   text: string,
-  opts: { newParagraph?: boolean } = {},
+  opts: { newParagraph?: boolean; heading?: boolean } = {},
 ): Promise<void> {
   if (text === '') return;
+  const heading = opts.heading === true;
   const js = `
 await (async () => {
   if (${opts.newParagraph === true}) {
     await page.keyboard.press('Enter');
     await sleep(150);
   }
+${heading ? setFontSizeJs(FONT_SIZE_HEADING) + TOGGLE_BOLD_JS : ''}
   const lines = ${JSON.stringify(text.split(String.fromCharCode(10)))};
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {
@@ -365,6 +403,7 @@ await (async () => {
       await sleep(150);
     }
   }
+${heading ? TOGGLE_BOLD_JS + setFontSizeJs(FONT_SIZE_BODY) : ''}
   await sleep(${SETTLE_MS});
   console.log(JSON.stringify({ typed: true }));
 })();
@@ -541,6 +580,35 @@ await (async () => {
     throw new ElementNotFoundError(stepName, '발행 설정 패널(카테고리 드롭다운이 나타나지 않음)', excerptAround(tree, '발행'));
   }
   ctx.onProgress?.(`[${stepName}] 발행 설정 패널 열림`);
+}
+
+/**
+ * 발행 설정 패널을 닫는다 — 카테고리·태그는 그대로 유지된다(실측: 닫았다 다시 열어도
+ * "테슬라", "#유지테스트" 가 남아 있었다). 패널을 닫아야 사람이 본문을 직접 고칠 수 있다.
+ *
+ * 주의: 패널 안의 '발행 설정 닫기' 버튼은 그 아래 체크박스 묶음만 접는 버튼이라 패널 전체를
+ * 닫지 못한다(실측). Escape 를 눌러야 패널이 사라진다.
+ */
+export async function closePublishPanel(ctx: StepCtx): Promise<void> {
+  const stepName = 'closePublishPanel';
+  const js = `
+await (async () => {
+  await page.keyboard.press('Escape');
+  const dropdown = ${frameLocator(CATEGORY_DROPDOWN_BUTTON)};
+  let stillOpen = true;
+  for (let attempt = 0; attempt < 20 && stillOpen; attempt++) {
+    await sleep(500);
+    stillOpen = (await dropdown.count()) > 0;
+  }
+  console.log(JSON.stringify({ panelClosed: !stillOpen }));
+})();
+`;
+  const stdout = await runEvaluate(ctx, stepName, js, TIMEOUT_TYPE_MS);
+  const { panelClosed } = parseJsonStdout<{ panelClosed?: boolean }>(stepName, stdout);
+  if (panelClosed !== true) {
+    throw new EvaluationFailedError(stepName, '발행 설정 패널이 닫히지 않았습니다 — 본문을 수정할 수 없습니다.');
+  }
+  ctx.onProgress?.(`[${stepName}] 발행 설정 패널을 닫았습니다 — 이제 브라우저에서 직접 고칠 수 있습니다`);
 }
 
 /**

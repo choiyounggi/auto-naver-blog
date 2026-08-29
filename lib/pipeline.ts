@@ -51,6 +51,13 @@ class LazyNaverPublisher implements NaverPublisherApi {
     return this.inner.fillEditor(draft, input, onProgress);
   }
 
+  async refreshPreview(input: PostInput): Promise<EditorPreview> {
+    if (!this.inner) {
+      throw new Error('[pipeline] refreshPreview() 가 fillEditor() 없이 호출되었습니다.');
+    }
+    return this.inner.refreshPreview(input);
+  }
+
   async publish(): Promise<PublishResult> {
     if (!this.inner) {
       // NaverPublisher.publish() 가 fillEditor 없이 불렸을 때와 같은 방식으로 거부한다:

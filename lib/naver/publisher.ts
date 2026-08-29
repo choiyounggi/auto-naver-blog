@@ -20,11 +20,12 @@ import type { StepCtx } from './steps';
 import {
   attachPlace,
   capturePreview,
+  closePublishPanel,
+  openPublishPanel,
   closeCurrentTab,
   dismissEntryPopups,
   fillBodyAndImages,
   fillTitle,
-  openPublishPanel,
   openEditor,
   selectCategory,
   setTags,
@@ -40,6 +41,7 @@ export class NaverPublisher implements NaverPublisherApi {
   // D8: fillEditor 가 성공적으로 끝났을 때만 true 로 바뀐다. publish() 는 이게 true 가
   // 아니면 submitPublish 를 호출하지 않고 거부한다.
   private editorFilled = false;
+  private editorUrl: string | null = null;
 
   // danger_zone: openEditor 가 이 인스턴스에서 탭을 연 적이 있는지 — abort() 가 "자기가
   // 연 탭만" 닫도록 판정하는 데 쓴다.
@@ -80,6 +82,9 @@ export class NaverPublisher implements NaverPublisherApi {
     await openPublishPanel(ctx);
     await selectCategory(ctx, input.category);
     await setTags(ctx, draft.tags);
+    // 패널을 닫아 둬야 사람이 브라우저에서 본문을 직접 고칠 수 있다. 카테고리·태그는
+    // 그대로 남아 있고, 발행할 때 패널을 다시 연다.
+    await closePublishPanel(ctx);
 
     // D12: 스크린샷은 <dataDir>/jobs/<jobId>/preview.png 에 남긴다. 이 스크린샷을 워커
     // 컨텍스트로 Read 하지 않는다.
@@ -87,11 +92,26 @@ export class NaverPublisher implements NaverPublisherApi {
     await capturePreview(ctx, screenshotPath);
 
     this.editorFilled = true;
+    this.editorUrl = editorUrl;
 
     return {
       screenshotPath,
       editorUrl,
     };
+  }
+
+  /**
+   * 미리보기 스크린샷만 다시 찍는다. 사람이 브라우저에서 본문을 고친 뒤, 무엇이 발행될지
+   * 다시 확인하려고 쓴다. 에디터를 건드리지 않으므로 발행 여부에 영향이 없다.
+   */
+  async refreshPreview(input: PostInput): Promise<EditorPreview> {
+    if (!this.editorFilled) {
+      throw new Error('[refreshPreview] fillEditor() 가 성공한 적이 없어 미리보기를 다시 찍을 수 없습니다.');
+    }
+    const ctx: StepCtx = { repl: this.repl };
+    const screenshotPath = path.join(this.config.dataDir, 'jobs', input.jobId, 'preview.png');
+    await capturePreview(ctx, screenshotPath);
+    return { screenshotPath, editorUrl: this.editorUrl ?? '' };
   }
 
   async publish(): Promise<PublishResult> {
@@ -110,6 +130,9 @@ export class NaverPublisher implements NaverPublisherApi {
     this.editorFilled = false;
 
     const ctx: StepCtx = { repl: this.repl };
+    // fillEditor 가 패널을 닫아 두었으므로 다시 연다 — 카테고리·태그는 그대로 남아 있다.
+    // 사이에 사람이 본문을 고쳤다면 그 내용 그대로 발행된다.
+    await openPublishPanel(ctx);
     const { resultUrl } = await submitPublish(ctx);
 
     // D2: 실제로 관측한 것만 주장한다 — evaluate 가 성공했다는 것과 URL을 읽었다는 것뿐,

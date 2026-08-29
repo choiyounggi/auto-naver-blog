@@ -96,3 +96,51 @@
   padding: var(--space-3);
   font-size: 0.875rem;
 }
+
+.editNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-4) var(--space-6);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+
+.editActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+  color: var(--ink);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--paper-sunken);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+}
+
+.hint {
+  font-size: 0.8125rem;
+  color: var(--ink-dim);
+}
+
+.previewShot {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}

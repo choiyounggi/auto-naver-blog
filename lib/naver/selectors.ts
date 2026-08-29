@@ -50,6 +50,23 @@ export const IMAGE_TOOLBAR_BUTTON = '.se-image-toolbar-button';
 export const UPLOADED_IMAGE = 'img.se-image-resource';
 
 // ---------------------------------------------------------------------------
+// 글자 서식 (소제목 강조)
+// ---------------------------------------------------------------------------
+
+// [실측] 글자 크기 드롭다운 버튼과, 열렸을 때 나타나는 옵션 목록.
+// 고를 수 있는 크기는 11·13·15·16·19·24·28·30·34·38 이고 기본은 15 다.
+export const FONT_SIZE_BUTTON = '.se-font-size-code-toolbar-button';
+export const FONT_SIZE_OPTION = '.se-toolbar-option-font-size-code button';
+
+// [실측] 굵게 토글. 켜고 끄는 방식이라 소제목을 쓴 뒤 반드시 다시 꺼야 한다.
+export const BOLD_BUTTON = '.se-bold-toolbar-button';
+
+// 본문 기본 크기와 소제목 크기. 인기글 4편을 분석해 보니 본문은 기본 크기를 그대로 쓰고
+// 강조는 굵게로만 한다 — 소제목만 한 단계 키워 구조가 보이게 하고, 그 외에는 손대지 않는다.
+export const FONT_SIZE_BODY = '15';
+export const FONT_SIZE_HEADING = '19';
+
+// ---------------------------------------------------------------------------
 // 장소(위치) 첨부 — 툴바 '장소' 를 누르면 검색 팝업이 열린다
 // ---------------------------------------------------------------------------
 

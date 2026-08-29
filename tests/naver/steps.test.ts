@@ -6,6 +6,7 @@ import { CategoryNotFoundError, ElementNotFoundError, EvaluationFailedError } fr
 import {
   attachPlace,
   capturePreview,
+  closePublishPanel,
   closeCurrentTab,
   dismissEntryPopups,
   fillBodyAndImages,
@@ -43,6 +44,7 @@ interface FakeOptions {
   hasEditorFrame?: boolean;
   categories?: string[];
   panelOpen?: boolean;
+  panelClosed?: boolean;
   imageCount?: number;
   visibleCount?: number;
   publishUrl?: string | null;
@@ -92,6 +94,9 @@ function fakeRepl(opts: FakeOptions = {}) {
         const target = match ? match[1] : '';
         const names = opts.categories ?? ['여행', '일상'];
         return ok(JSON.stringify({ names, index: names.indexOf(target) }));
+      }
+      if (js.includes('panelClosed')) {
+        return ok(JSON.stringify({ panelClosed: opts.panelClosed ?? true }));
       }
       if (js.includes('panelOpen')) {
         return ok(JSON.stringify({ panelOpen: opts.panelOpen ?? true }));
@@ -155,6 +160,7 @@ function makeDraft(imageCount: number, overrides: Partial<PostDraft> = {}): Post
     intro: '인트로',
     blocks: Array.from({ length: imageCount }, (_, i) => ({
       imageId: `img-${i + 1}`,
+      heading: '',
       caption: `캡션-${i + 1}`,
       altText: `대체텍스트-${i + 1}`,
     })),
@@ -458,5 +464,78 @@ describe('closeCurrentTab', () => {
   test('에러: evaluate 가 실패하면 던진다', async () => {
     const { repl } = fakeRepl({ failAll: '탭 정리 실패' });
     await expect(closeCurrentTab({ repl })).rejects.toThrow(/탭 정리 실패/);
+  });
+});
+
+
+// 인기글 4편 분석: 강조는 굵게만 쓰고 본문 크기는 기본(15)을 유지한다. 소제목만 한 단계
+// 키워(19) 구조를 드러낸다. 켠 서식은 반드시 되돌려야 뒤 문단까지 굵어지지 않는다.
+describe('소제목 강조', () => {
+  test('정상: heading 이 있으면 굵게+큰 글씨로 쓰고 본문은 새 문단으로 이어간다', async () => {
+    const { repl, calls } = fakeRepl();
+    const draft = makeDraft(1);
+    draft.blocks[0].heading = '기본 안주부터 달랐던 첫인상';
+
+    await fillBodyAndImages({ repl }, draft, makeInput(1));
+
+    const headingJs = calls.find((js) => js.includes('기본 안주부터 달랐던 첫인상'));
+    expect(headingJs).toContain('se-bold-toolbar-button');
+    expect(headingJs).toContain('se-font-size-code-toolbar-button');
+    expect(headingJs).toContain('"19"');
+  });
+
+  test('정상: 소제목 뒤에 서식을 되돌린다(굵게 끄고 본문 크기 복귀)', async () => {
+    const { repl, calls } = fakeRepl();
+    const draft = makeDraft(1);
+    draft.blocks[0].heading = '소제목';
+
+    await fillBodyAndImages({ repl }, draft, makeInput(1));
+
+    const headingJs = calls.find((js) => js.includes('소제목')) ?? '';
+    // 굵게 토글이 두 번(켜기·끄기), 크기 지정도 두 번(19 → 15)
+    expect(headingJs.split('se-bold-toolbar-button').length - 1).toBe(2);
+    expect(headingJs).toContain('"15"');
+    expect(headingJs.indexOf('"15"')).toBeGreaterThan(headingJs.indexOf('"19"'));
+  });
+
+  test('경계값: heading 이 비어 있으면 서식을 건드리지 않는다', async () => {
+    const { repl, calls } = fakeRepl();
+    await fillBodyAndImages({ repl }, makeDraft(1), makeInput(1));
+
+    expect(calls.some((js) => js.includes('se-bold-toolbar-button'))).toBe(false);
+    expect(calls.some((js) => js.includes('se-font-size-code-toolbar-button'))).toBe(false);
+  });
+
+  test('경계값: 소제목이 있으면 캡션은 새 문단에서 시작한다', async () => {
+    const { repl, calls } = fakeRepl();
+    const draft = makeDraft(1);
+    draft.blocks[0].heading = '소제목';
+
+    await fillBodyAndImages({ repl }, draft, makeInput(1));
+
+    const captionJs = calls.find((js) => js.includes('캡션-1')) ?? '';
+    expect(captionJs).toContain("keyboard.press('Enter')");
+  });
+});
+
+
+// 실측(2026-08-29): 패널 안의 '발행 설정 닫기' 버튼은 그 아래 체크박스 묶음만 접는다.
+// 패널 전체는 Escape 로 닫힌다. 닫아야 사람이 본문을 직접 고칠 수 있고, 카테고리·태그는
+// 닫았다 다시 열어도 그대로 남아 있다.
+describe('closePublishPanel', () => {
+  test('정상: Escape 로 패널을 닫는다', async () => {
+    const { repl, calls } = fakeRepl({ panelClosed: true });
+    await expect(closePublishPanel({ repl })).resolves.toBeUndefined();
+    expect(calls[0]).toContain("keyboard.press('Escape')");
+  });
+
+  test('에러: 패널이 닫히지 않으면 실패한다(수정할 수 없는 상태를 숨기지 않는다)', async () => {
+    const { repl } = fakeRepl({ panelClosed: false });
+    await expect(closePublishPanel({ repl })).rejects.toThrow(/닫히지 않았습니다/);
+  });
+
+  test('에러: evaluate 가 실패하면 던진다', async () => {
+    const { repl } = fakeRepl({ failAll: '채널 죽음' });
+    await expect(closePublishPanel({ repl })).rejects.toThrow(EvaluationFailedError);
   });
 });

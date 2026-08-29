@@ -77,6 +77,7 @@ class FakeGenerator implements ContentGeneratorApi {
 }
 
 class FakePublisher implements NaverPublisherApi {
+  refreshPreviewCallCount = 0;
   fillEditorCallCount = 0;
   publishCallCount = 0;
   shouldThrowOnFill = false;
@@ -92,6 +93,11 @@ class FakePublisher implements NaverPublisherApi {
     onProgress?.('에디터에 채우는 중');
     if (this.shouldThrowOnFill) throw new Error('fillEditor boom');
     return { screenshotPath: '/data/jobs/x/preview.png', editorUrl: 'https://blog.naver.com/PostWriteForm.naver' };
+  }
+
+  async refreshPreview(input: PostInput): Promise<EditorPreview> {
+    this.refreshPreviewCallCount += 1;
+    return { screenshotPath: `/preview/${input.jobId}.png`, editorUrl: 'https://blog.naver.com/tester?Redirect=Write' };
   }
 
   async publish(): Promise<PublishResult> {

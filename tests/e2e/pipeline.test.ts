@@ -51,7 +51,7 @@ function makeDraft(): PostDraft {
   return {
     title: '제목',
     intro: '인트로',
-    blocks: [{ imageId: 'img-0', caption: '캡션', altText: '대체텍스트' }],
+    blocks: [{ imageId: 'img-0', heading: '', caption: '캡션', altText: '대체텍스트' }],
     outro: '아웃트로',
     tags: ['태그'],
     topic: '일상',

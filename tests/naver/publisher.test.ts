@@ -102,6 +102,7 @@ function makeDraft(imageCount: number): PostDraft {
     intro: '인트로',
     blocks: Array.from({ length: imageCount }, (_, i) => ({
       imageId: `img-${i + 1}`,
+      heading: '',
       caption: `캡션-${i + 1}`,
       altText: `대체텍스트-${i + 1}`,
     })),
@@ -141,6 +142,12 @@ function successRepl(editorReadyTree: string, publishUrl: string | null = 'https
     }
     if (js.includes('names.indexOf')) {
       return categoryResult(js);
+    }
+    if (js.includes('panelClosed')) {
+      return okResult(JSON.stringify({ panelClosed: true }));
+    }
+    if (js.includes('se-map-toolbar-button')) {
+      return okResult(JSON.stringify({ popupOpen: true, resultCount: 1, attached: true, firstName: '판교역' }));
     }
     if (js.includes('panelOpen')) {
       return okResult(JSON.stringify({ panelOpen: true }));
@@ -288,5 +295,55 @@ describe('NaverPublisher — review r1 F1: publishedAt 은 postUrl 과 같은 �
 
     expect(result.ok).toBe(true);
     expect(result.publishedAt).not.toBeNull();
+  });
+});
+
+
+// 사람이 브라우저에서 직접 고칠 수 있도록, fillEditor 는 발행 설정 패널을 닫아 둔 채 끝난다.
+// 발행할 때 패널을 다시 열고 누른다 — 카테고리·태그는 그대로 유지된다(실측).
+describe('NaverPublisher — 사람이 직접 수정하는 흐름', () => {
+  test('fillEditor 는 발행 설정 패널을 닫은 상태로 끝난다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await publisher.fillEditor(makeDraft(1), makeInput(1));
+
+    const closeIndex = repl.calls.findIndex((c) => c.js.includes('panelClosed'));
+    expect(closeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishClickCount(repl)).toBe(0);
+  });
+
+  test('publish 는 패널을 다시 연 뒤 발행을 누른다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await publisher.fillEditor(makeDraft(1), makeInput(1));
+    const beforePublish = repl.calls.length;
+    await publisher.publish();
+
+    const afterCalls = repl.calls.slice(beforePublish).map((c) => c.js);
+    const openIndex = afterCalls.findIndex((js) => js.includes('panelOpen'));
+    const clickIndex = afterCalls.findIndex((js) => js.includes(PUBLISH_CLICK_MARKER));
+    expect(openIndex).toBeGreaterThanOrEqual(0);
+    expect(openIndex).toBeLessThan(clickIndex);
+  });
+
+  test('refreshPreview 는 스크린샷만 다시 찍고 발행하지 않는다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await publisher.fillEditor(makeDraft(1), makeInput(1));
+    const preview = await publisher.refreshPreview(makeInput(1));
+
+    expect(preview.screenshotPath).toContain('job-1');
+    expect(publishClickCount(repl)).toBe(0);
+  });
+
+  test('에러: fillEditor 없이 refreshPreview 를 부르면 거부한다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(loggedInStatus()), makeConfig());
+
+    await expect(publisher.refreshPreview(makeInput(1))).rejects.toThrow(/fillEditor/);
+    expect(repl.calls.length).toBe(0);
   });
 });
