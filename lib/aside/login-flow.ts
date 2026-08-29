@@ -1,10 +1,13 @@
 import { MY_BLOG_URL, discoverBlogMeta, parseBlogIdFromUrl, writeBlogMetaEnv } from './blog-meta';
+import { readLoginPersistence, type LoginPersistence } from './login-persistence';
 import { parseLastJson } from './protocol';
 import type { AsideReplApi, NaverSessionApi } from '../types';
 
 export interface LoginFlowResult {
   alreadyLoggedIn: boolean;
   cookieCount: number;
+  /** 로그인이 브라우저를 닫아도 유지되는가 — '로그인 상태 유지' 결과 */
+  persistence: LoginPersistence;
   blogId: string;
   categories: string[];
   /** 쉼표·큰따옴표 때문에 .env 에 기록하지 못한 카테고리 이름 (조용히 버리지 않는다) */
@@ -13,6 +16,8 @@ export interface LoginFlowResult {
 
 export interface LoginFlowOptions {
   envPath: string;
+  /** 로그인이 영속인지 판정하려고 읽는다. 주지 않으면 판정을 건너뛴다. */
+  cookieFile?: string;
   pollIntervalMs?: number;
   loginTimeoutMs?: number;
   /** 사람에게 보여줄 진행 메시지 — CLI 는 콘솔에, API 는 무시한다 */
@@ -58,6 +63,30 @@ await (async () => {
 })();
 `;
 
+// 실측: 네이버 로그인 페이지의 '로그인 상태 유지' 체크박스는 기본이 꺼짐이다. 꺼진 채로
+// 로그인하면 인증 쿠키가 세션 쿠키로 내려와 브라우저를 닫는 순간 로그인이 풀린다.
+// 이 체크박스는 자격증명이 아니라 화면의 설정 토글이므로 대신 켜 준다 — ID·비밀번호는
+// 여전히 사람이 직접 입력한다.
+const KEEP_LOGGED_IN_JS = `
+await (async () => {
+  const box = page.locator('#loginStay');
+  let checked = null;
+  for (let attempt = 0; attempt < 20 && checked === null; attempt++) {
+    if ((await box.count()) > 0) {
+      checked = await box.isChecked();
+    } else {
+      await sleep(500);
+    }
+  }
+  if (checked === false) {
+    await page.locator('label[for="loginStay"]').first().click();
+    await sleep(300);
+    checked = await box.isChecked();
+  }
+  console.log(JSON.stringify({ keepLoggedInChecked: checked === true }));
+})();
+`;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -96,9 +125,13 @@ export async function runNaverLoginFlow(
   if (alreadyLoggedIn) {
     notify('이미 로그인되어 있습니다 — 로그인 단계를 건너뜁니다.');
   } else {
+    const checked = await ensureKeepLoggedInChecked(repl);
     notify(
-      'Aside 브라우저에 네이버 로그인 페이지를 열었습니다. 직접 로그인해 주세요. ' +
-        "'로그인 상태 유지'를 체크하면 세션이 오래 갑니다. 완료되면 자동으로 감지합니다.",
+      checked
+        ? "Aside 브라우저에 네이버 로그인 페이지를 열었습니다. '로그인 상태 유지'는 켜 뒀으니 " +
+          '아이디·비밀번호만 직접 입력해 주세요. 완료되면 자동으로 감지합니다.'
+        : "Aside 브라우저에 네이버 로그인 페이지를 열었습니다. 직접 로그인해 주세요. " +
+          "'로그인 상태 유지'를 꼭 체크하세요 — 체크하지 않으면 브라우저를 닫는 순간 로그인이 풀립니다.",
     );
     const loggedIn = await waitForLogin(repl, pollIntervalMs, loginTimeoutMs);
     if (!loggedIn) throw new LoginTimeoutError(loginTimeoutMs);
@@ -107,16 +140,35 @@ export async function runNaverLoginFlow(
   const cookieCount = await session.exportCookies();
   notify(`쿠키 ${cookieCount}개를 저장했습니다.`);
 
+  const persistence =
+    options.cookieFile === undefined
+      ? { keepLoggedIn: false, expiresAt: null }
+      : await readLoginPersistence(options.cookieFile);
+  notify(
+    persistence.keepLoggedIn
+      ? `로그인이 유지됩니다 (인증 쿠키 만료: ${persistence.expiresAt}). 다시 로그인하지 않아도 됩니다.`
+      : "주의: 인증 쿠키가 세션 쿠키입니다 — 브라우저를 닫으면 로그인이 풀립니다. '로그인 상태 유지'를 켜고 다시 로그인하세요.",
+  );
+
   const meta = await discoverBlogMeta(repl);
   const { written, skipped } = await writeBlogMetaEnv(options.envPath, meta);
 
   return {
     alreadyLoggedIn,
     cookieCount,
+    persistence,
     blogId: meta.blogId,
     categories: written,
     skippedCategories: skipped,
   };
+}
+
+/** '로그인 상태 유지' 를 켠다. 못 켜도 로그인 자체는 진행한다(경고만 남긴다). */
+async function ensureKeepLoggedInChecked(repl: AsideReplApi): Promise<boolean> {
+  const result = await repl.evaluate(KEEP_LOGGED_IN_JS);
+  if (!result.ok) return false;
+  const parsed = parseLastJson<{ keepLoggedInChecked?: unknown }>(result.stdout);
+  return parsed?.keepLoggedInChecked === true;
 }
 
 // 로그인 완료를 "로그인 페이지를 벗어났다"(부재)가 아니라 "내 블로그 아이디를 읽어냈다"

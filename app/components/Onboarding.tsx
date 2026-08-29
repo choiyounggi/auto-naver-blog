@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { SetupState } from '@/lib/aside/blog-meta';
+import type { LoginPersistence } from '@/lib/aside/login-persistence';
 import styles from './Onboarding.module.css';
 
 interface OnboardingProps {
@@ -14,6 +15,7 @@ export function Onboarding({ state, onState }: OnboardingProps) {
   const [waiting, setWaiting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [persistence, setPersistence] = useState<LoginPersistence | null>(null);
 
   async function handleLogin() {
     if (waiting) return;
@@ -26,7 +28,9 @@ export function Onboarding({ state, onState }: OnboardingProps) {
       if (!response.ok) {
         throw new Error(body?.error ?? `로그인에 실패했습니다 (${response.status})`);
       }
-      onState(body as SetupState);
+      const result = body as SetupState & { persistence?: LoginPersistence };
+      setPersistence(result.persistence ?? null);
+      onState(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인 중 알 수 없는 오류가 발생했습니다.');
     } finally {
@@ -64,7 +68,10 @@ export function Onboarding({ state, onState }: OnboardingProps) {
           Aside 앱이 뒤에 있으면 창이 안 보일 수 있습니다 — Dock이나 <span className="mono">⌘Tab</span>
           으로 Aside를 앞으로 가져오세요.
         </li>
-        <li>직접 로그인합니다. &lsquo;로그인 상태 유지&rsquo;를 체크하면 세션이 오래 갑니다.</li>
+        <li>
+          아이디·비밀번호만 직접 입력합니다 — &lsquo;로그인 상태 유지&rsquo;는 자동으로 켜 둡니다.
+          그래야 브라우저를 닫아도 로그인이 풀리지 않습니다.
+        </li>
         <li>로그인이 확인되면 쿠키와 블로그 정보(아이디·카테고리)가 자동으로 저장됩니다.</li>
       </ol>
 
@@ -93,6 +100,19 @@ export function Onboarding({ state, onState }: OnboardingProps) {
       </div>
 
       {error && <p className={styles.error}>{error}</p>}
+
+      {persistence !== null && !persistence.keepLoggedIn && (
+        <p className={styles.error}>
+          로그인은 됐지만 인증 쿠키가 세션 쿠키입니다 — 브라우저를 닫으면 풀립니다.
+          &lsquo;로그인 상태 유지&rsquo;를 체크한 뒤 다시 로그인해 주세요.
+        </p>
+      )}
+      {persistence !== null && persistence.keepLoggedIn && (
+        <p className={styles.waiting}>
+          로그인이 유지됩니다 — 인증 쿠키 만료 {persistence.expiresAt?.slice(0, 10)}. 그때까지 다시
+          로그인하지 않아도 됩니다.
+        </p>
+      )}
 
       {waiting && (
         <p className={styles.waiting}>

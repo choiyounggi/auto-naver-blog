@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -32,6 +32,9 @@ function scriptedRepl(urls: (string | null)[], overrides: { open?: AsideEvalResu
         if (overrides.open) return overrides.open;
         const url = urls[index++] ?? null;
         return ok(`${BANNER}\n${JSON.stringify({ url })}`);
+      }
+      if (js.includes('loginStay')) {
+        return ok(JSON.stringify({ keepLoggedInChecked: true }));
       }
       if (js.includes('querySelectorAll')) {
         return ok(JSON.stringify({ links: [{ text: '테슬라', href: '?categoryNo=6' }] }));
@@ -162,5 +165,57 @@ describe('runNaverLoginFlow — 에러/경계값', () => {
 
     expect(result.cookieCount).toBe(0);
     expect(result.blogId).toBe('dev_king');
+  });
+});
+
+
+// 실측 회귀(2026-08-25): '로그인 상태 유지' 를 켜지 않으면 인증 쿠키가 세션 쿠키로 내려와
+// 브라우저를 닫는 순간 로그인이 풀린다. 로그인 전에 그 체크박스를 대신 켜 준다.
+describe("runNaverLoginFlow — '로그인 상태 유지'", () => {
+  test('로그인이 필요하면 체크박스를 켜는 스텝을 먼저 보낸다', async () => {
+    const { repl, calls } = scriptedRepl([
+      'https://nid.naver.com/nidlogin.login',
+      'https://blog.naver.com/dev_king',
+      'https://blog.naver.com/dev_king',
+    ]);
+
+    await runNaverLoginFlow(repl, fakeSession(), { envPath, pollIntervalMs: 1 });
+
+    const keepIndex = calls.findIndex((js) => js.includes('loginStay'));
+    expect(keepIndex).toBeGreaterThanOrEqual(0);
+    // 체크는 사람이 로그인하기 전에 끝나야 한다 — URL 폴링보다 앞서야 한다.
+    const pollIndex = calls.findIndex((js) => js.includes('url: page.url()') && !js.includes('openTab'));
+    expect(keepIndex).toBeLessThan(pollIndex);
+  });
+
+  test('이미 로그인돼 있으면 체크박스를 건드리지 않는다', async () => {
+    const { repl, calls } = scriptedRepl(['https://blog.naver.com/dev_king', 'https://blog.naver.com/dev_king']);
+
+    await runNaverLoginFlow(repl, fakeSession(), { envPath });
+
+    expect(calls.some((js) => js.includes('loginStay'))).toBe(false);
+  });
+
+  test('cookieFile 을 주면 로그인 지속성을 판정해 돌려준다', async () => {
+    const { repl } = scriptedRepl(['https://blog.naver.com/dev_king', 'https://blog.naver.com/dev_king']);
+    const cookieFile = path.join(scratchDir, 'cookies.json');
+    await writeFile(
+      cookieFile,
+      JSON.stringify([{ name: 'NID_AUT', expires: Math.floor(Date.parse('2027-01-01T00:00:00Z') / 1000) }]),
+      'utf8',
+    );
+
+    const result = await runNaverLoginFlow(repl, fakeSession(), { envPath, cookieFile });
+
+    expect(result.persistence.keepLoggedIn).toBe(true);
+    expect(result.persistence.expiresAt).toBe('2027-01-01T00:00:00.000Z');
+  });
+
+  test('경계값: cookieFile 을 주지 않으면 판정을 건너뛴다(유지 안 됨으로 본다)', async () => {
+    const { repl } = scriptedRepl(['https://blog.naver.com/dev_king', 'https://blog.naver.com/dev_king']);
+
+    const result = await runNaverLoginFlow(repl, fakeSession(), { envPath });
+
+    expect(result.persistence).toEqual({ keepLoggedIn: false, expiresAt: null });
   });
 });

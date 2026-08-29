@@ -29,13 +29,20 @@ export async function POST(): Promise<Response> {
 
     try {
       await repl.start();
-      const result = await runNaverLoginFlow(repl, session, { envPath: ENV_FILE_PATH });
+      const result = await runNaverLoginFlow(repl, session, {
+        envPath: ENV_FILE_PATH,
+        cookieFile: config.cookieFile,
+      });
       const state = await readSetupState({
         envPath: ENV_FILE_PATH,
         cookieFile: config.cookieFile,
         envOverrides: { blogId: config.naverBlogId },
       });
-      return NextResponse.json({ ...state, skippedCategories: result.skippedCategories });
+      return NextResponse.json({
+        ...state,
+        skippedCategories: result.skippedCategories,
+        persistence: result.persistence,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // 시간 초과는 사용자가 다시 시도하면 되는 상황이므로 500 이 아니라 408 로 구분한다.

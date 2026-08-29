@@ -40,6 +40,7 @@ async function main() {
 
     const result = await runNaverLoginFlow(repl, session, {
       envPath: ENV_FILE_PATH,
+      cookieFile: config.cookieFile,
       onMessage: (message) => console.log(message),
     });
 
