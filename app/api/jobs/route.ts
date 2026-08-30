@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth/guard';
 import { loadConfig } from '@/lib/config';
 import { getJobStore } from '@/lib/job/store-instance';
 import { runJob } from '@/lib/job/runner';
@@ -17,6 +18,10 @@ import {
 import { PostInputSchema, type UploadedImage } from '@/lib/types';
 
 export async function POST(request: Request): Promise<Response> {
+  // 로그인한 사람만 잡을 만들 수 있다 — 이 잡의 소유자가 곧 그 세션이다.
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const config = loadConfig();
   const store = getJobStore();
 
@@ -102,7 +107,8 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'invalid input', issues: parsed.error.issues }, { status: 400 });
   }
 
-  const jobState = await store.create(parsed.data);
+  // 소유자를 기록한다 — 다른 사람이 이 잡을 고치거나 발행할 수 없게 하는 근거다.
+  const jobState = await store.create(parsed.data, guard.ctx.session.sid);
 
   // 잡 파이프라인을 백그라운드로 시작한다. awaiting_approval에서 반드시 멈추고
   // publisher.publish()는 절대 호출하지 않는다 (안전 계약, lib/job/runner.ts).

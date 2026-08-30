@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { AppConfig } from '@/lib/config';
 import { JobStore } from '@/lib/job/store';
+import { EditorNotHeldError, getEditorQueue, resetEditorQueue } from '@/lib/job/queue';
 import { getServices, resetServices, setServices } from '@/lib/job/services';
 import { approveAndPublish, runJob } from '@/lib/job/runner';
 import type {
@@ -121,9 +122,13 @@ beforeEach(async () => {
   generator = new FakeGenerator();
   publisher = new FakePublisher();
   setServices({ generator, publisher });
+  // 에디터 사용권 큐는 globalThis 에 있어 테스트 사이에 남는다. runJob 은 승인 대기까지
+  // 사용권을 쥐고 끝나므로, 비우지 않으면 다음 테스트가 앞 테스트의 잡을 기다리게 된다.
+  resetEditorQueue();
 });
 
 afterEach(async () => {
+  resetEditorQueue();
   resetServices();
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -284,6 +289,11 @@ describe('approveAndPublish — 수정 반영', () => {
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
 
+    // 계약 변경(동시 발행 직렬화): 발행은 그 잡이 에디터 사용권을 쥐고 있을 때만 된다.
+    // 원래 runJob 이 fillEditor 직전에 잡아 두는 것을, 여기서는 단계를 손으로 옮겼으므로
+    // 대신 잡아 준다.
+    await getEditorQueue().acquire(jobId);
+
     const before = publisher.fillEditorCallCount;
     await approveAndPublish(store, jobId);
 
@@ -302,6 +312,11 @@ describe('approveAndPublish — 수정 반영', () => {
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
 
+    // 계약 변경(동시 발행 직렬화): 발행은 그 잡이 에디터 사용권을 쥐고 있을 때만 된다.
+    // 원래 runJob 이 fillEditor 직전에 잡아 두는 것을, 여기서는 단계를 손으로 옮겼으므로
+    // 대신 잡아 준다.
+    await getEditorQueue().acquire(jobId);
+
     const before = publisher.fillEditorCallCount;
     await approveAndPublish(store, jobId);
 
@@ -309,5 +324,115 @@ describe('approveAndPublish — 수정 반영', () => {
     expect(publisher.publishCallCount).toBe(1);
     const state = await store.get(jobId);
     expect(state?.editorDraft?.title).toBe('사람이 고친 제목');
+  });
+});
+
+
+// 동시 발행 직렬화 (완료 기준 4): Aside REPL 이 하나뿐이라 두 잡이 같은 에디터 탭을 만지면
+// 한쪽이 다른 쪽의 글을 발행하게 된다. 뒤 잡은 앞 잡이 발행을 마칠 때까지 시작하지 않는다.
+describe('runJob/approveAndPublish — 동시 발행 직렬화', () => {
+  test('정상: 앞 잡이 발행을 마친 뒤에야 뒤 잡이 에디터를 채운다', async () => {
+    const events: string[] = [];
+    let inFlight = 0;
+    let releaseFirstFill: (() => void) | null = null;
+
+    publisher.fillEditor = async (_draft: PostDraft, input: PostInput): Promise<EditorPreview> => {
+      publisher.fillEditorCallCount += 1;
+      inFlight += 1;
+      // 에디터를 동시에 두 잡이 만지면 여기서 2가 된다 — 그게 이 테스트가 막는 상황이다.
+      expect(inFlight).toBe(1);
+      events.push(`fill:${input.jobId}`);
+      if (input.jobId === 'job-first') {
+        await new Promise<void>((resolve) => {
+          releaseFirstFill = resolve;
+        });
+      }
+      inFlight -= 1;
+      return { screenshotPath: `/preview/${input.jobId}.png`, editorUrl: 'https://blog.naver.com/x' };
+    };
+
+    await store.create(makeInput('job-first'));
+    await store.create(makeInput('job-second'));
+
+    const first = runJob(store, 'job-first');
+    // 첫 잡이 에디터를 잡을 때까지 기다린다.
+    while (releaseFirstFill === null) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const second = runJob(store, 'job-second');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // 두 번째 잡은 아직 에디터를 만지지 못했다 — 대기 중이다.
+    expect(events).toEqual(['fill:job-first']);
+    expect(getEditorQueue().position('job-second')).toBe(1);
+    const waitingLog = (await store.get('job-second'))?.log.map((entry) => entry.message) ?? [];
+    expect(waitingLog.some((message) => message.includes('앞에 1건'))).toBe(true);
+
+    (releaseFirstFill as () => void)();
+    await first;
+    expect((await store.get('job-first'))?.phase).toBe('awaiting_approval');
+    // 첫 잡이 승인 대기 중인 동안에도 에디터를 빼앗기지 않는다.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(events).toEqual(['fill:job-first']);
+
+    await approveAndPublish(store, 'job-first');
+    await second;
+
+    expect(events).toEqual(['fill:job-first', 'fill:job-second']);
+    expect((await store.get('job-second'))?.phase).toBe('awaiting_approval');
+    expect(getEditorQueue().isHeldBy('job-second')).toBe(true);
+  });
+
+  test('에러: 사용권을 쥐지 않은 잡의 발행은 거부한다 (서버 재시작·점유 만료 후)', async () => {
+    const jobId = 'job-nolease';
+    await store.create(makeInput(jobId));
+    await runJob(store, jobId);
+    // 서버가 다시 시작된 것과 같은 상태 — 잡 파일은 승인 대기지만 큐에는 아무도 없다.
+    resetEditorQueue();
+
+    await expect(approveAndPublish(store, jobId)).rejects.toThrow(EditorNotHeldError);
+    expect(publisher.publishCallCount).toBe(0);
+  });
+
+  test('경계값: 발행이 끝나면 사용권을 바로 반납한다', async () => {
+    const jobId = 'job-release';
+    await store.create(makeInput(jobId));
+    await runJob(store, jobId);
+    expect(getEditorQueue().isHeldBy(jobId)).toBe(true);
+
+    await approveAndPublish(store, jobId);
+    expect(getEditorQueue().isHeldBy(jobId)).toBe(false);
+    expect(getEditorQueue().snapshot()).toEqual({ holder: null, waiting: [] });
+  });
+
+  test('경계값: 에디터를 채우다 실패하면 사용권을 바로 반납한다', async () => {
+    const jobId = 'job-fillfail';
+    await store.create(makeInput(jobId));
+    publisher.shouldThrowOnFill = true;
+    await runJob(store, jobId);
+
+    expect((await store.get(jobId))?.phase).toBe('failed');
+    expect(getEditorQueue().snapshot()).toEqual({ holder: null, waiting: [] });
+  });
+});
+
+describe('runJob — 예상 못 한 실패에서도 에디터를 반납한다', () => {
+  test('에러: 에디터를 채운 뒤 상태 저장이 깨져도 사용권이 남지 않는다', async () => {
+    const jobId = 'job-patchfail';
+    await store.create(makeInput(jobId));
+    // fillEditor 직후의 저장을 깨뜨린다 — 이때 사용권을 쥔 채 끝나면 뒤의 모두가 막힌다.
+    const realPatch = store.patch.bind(store);
+    let calls = 0;
+    store.patch = async (id, fields) => {
+      calls += 1;
+      // 1회: draft 저장, 2회: preview/editorDraft 저장 → 여기서 깨뜨린다.
+      if (calls === 2) throw new Error('디스크 오류');
+      return realPatch(id, fields);
+    };
+
+    await runJob(store, jobId);
+
+    // 실제로 에디터를 채운 뒤에 깨졌는지 확인한다 — 그래야 이 테스트가 의도한 경로를 짚는다.
+    expect(publisher.fillEditorCallCount).toBe(1);
+    expect((await store.get(jobId))?.phase).toBe('failed');
+    expect(getEditorQueue().snapshot()).toEqual({ holder: null, waiting: [] });
   });
 });

@@ -74,3 +74,28 @@
   font-size: 0.8125rem;
   color: var(--ink-dim);
 }
+
+/* 일반 사용자에게 보이는 안내 — 관리자만 할 수 있는 일을 기다리는 상태다 */
+.notice {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  padding: var(--space-4) var(--space-6);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+
+.logoutButton {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  text-decoration: underline;
+}
+
+.logoutButton:hover {
+  color: var(--ink);
+}

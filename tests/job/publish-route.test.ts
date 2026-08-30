@@ -3,6 +3,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { POST as postPublish } from '@/app/api/jobs/[id]/publish/route';
+import { getEditorQueue, resetEditorQueue } from '@/lib/job/queue';
 import { resetServices, setServices } from '@/lib/job/services';
 import { getJobStore, resetJobStore } from '@/lib/job/store-instance';
 import { PublishResultSchema } from '@/lib/types';
@@ -99,6 +100,15 @@ async function makeRequest(jobId: string): Promise<Response> {
   });
 }
 
+/**
+ * 계약 변경(동시 발행 직렬화): 발행은 그 잡이 에디터 사용권을 쥐고 있을 때만 된다.
+ * 실제 흐름에서는 runJob 이 fillEditor 직전에 잡아 승인 대기 내내 쥐고 있지만, 이 테스트는
+ * 단계를 손으로 옮기므로 대신 잡아 준다.
+ */
+async function holdEditor(jobId: string): Promise<void> {
+  await getEditorQueue().acquire(jobId);
+}
+
 beforeEach(async () => {
   // 보안 정책: /tmp·$TMPDIR 금지 — 워크트리 내부 경로만 사용한다
   dataDir = path.join(process.cwd(), '.dev-loop', 'test-tmp', `publish-route-${randomUUID()}`);
@@ -109,9 +119,11 @@ beforeEach(async () => {
 
   publisher = new FakePublisher();
   setServices({ generator: new FakeGenerator(), publisher });
+  resetEditorQueue();
 });
 
 afterEach(async () => {
+  resetEditorQueue();
   resetServices();
   resetJobStore();
   if (originalDataDir === undefined) {
@@ -132,6 +144,7 @@ describe('POST /api/jobs/[id]/publish', () => {
     await store.transition(jobId, 'draft_ready', 'x');
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
+    await holdEditor(jobId);
 
     const response = await makeRequest(jobId);
     expect(response.status).toBe(200);
@@ -175,6 +188,7 @@ describe('POST /api/jobs/[id]/publish', () => {
     await store.transition(jobId, 'draft_ready', 'x');
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
+    await holdEditor(jobId);
     await store.transition(jobId, 'publishing', 'x');
     await store.transition(jobId, 'published', 'x');
 
@@ -198,6 +212,7 @@ describe('POST /api/jobs/[id]/publish', () => {
     await store.transition(jobId, 'draft_ready', 'x');
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
+    await holdEditor(jobId);
     publisher.shouldThrow = true;
 
     const response = await makeRequest(jobId);
@@ -217,6 +232,7 @@ describe('POST /api/jobs/[id]/publish', () => {
     await store.transition(jobId, 'draft_ready', 'x');
     await store.transition(jobId, 'filling_editor', 'x');
     await store.transition(jobId, 'awaiting_approval', 'x');
+    await holdEditor(jobId);
 
     const first = await makeRequest(jobId);
     const second = await makeRequest(jobId);

@@ -77,3 +77,25 @@ export function validateClientUpload(
   }
   return null;
 }
+
+/**
+ * 로그인 뒤 무엇을 보여 줄지 정한다.
+ *
+ * 관리자와 일반 사용자가 갈리는 지점이라 화면 조건문에 묻어 두지 않고 여기로 뺐다 —
+ * "일반 사용자에게 온보딩이 보이면 안 된다" 는 규칙을 테스트로 붙잡아 두기 위해서다.
+ */
+export type SetupScreen = 'checking' | 'onboarding' | 'waiting-for-admin' | 'upload';
+
+export function setupScreen(args: {
+  verifying: boolean;
+  /** null = 아직 서버에 물어보지 않았다 */
+  setup: { ready: boolean; admin: boolean } | null;
+}): SetupScreen {
+  if (args.setup === null) return 'checking';
+  if (args.setup.ready) return 'upload';
+  // 준비가 안 됐다 — 네이버 로그인은 관리자만 할 수 있다.
+  if (!args.setup.admin) return 'waiting-for-admin';
+  // 관리자에게도 라이브 확인이 끝나기 전에는 온보딩을 들이밀지 않는다. 확인 결과 로그인이
+  // 살아 있으면 온보딩 없이 바로 업로드 화면으로 간다.
+  return args.verifying ? 'checking' : 'onboarding';
+}

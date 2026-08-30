@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { forbiddenIfNotOwner, requireUser } from '@/lib/auth/guard';
 import { getJobStore } from '@/lib/job/store-instance';
 import { PostDraftSchema, type UploadedImage } from '@/lib/types';
 
@@ -13,6 +14,9 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const { id } = await params;
   const store = getJobStore();
 
@@ -20,6 +24,8 @@ export async function PUT(
   if (!job) {
     return NextResponse.json({ error: 'job not found' }, { status: 404 });
   }
+  const forbidden = forbiddenIfNotOwner(guard.ctx, job);
+  if (forbidden) return forbidden;
   // 승인 대기 중일 때만 고칠 수 있다 — 발행이 시작된 뒤에 바꾸면 화면과 결과가 어긋난다.
   if (job.phase !== 'awaiting_approval') {
     return NextResponse.json(

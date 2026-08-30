@@ -195,14 +195,28 @@ export async function writeBlogMetaEnv(envPath: string, meta: BlogMeta): Promise
 }
 
 /**
- * `/api/setup` 응답. 파일 기준 상태(SetupState)에 라이브 로그인 확인 결과를 덧붙인 것이다 —
- * `loggedIn` 이 null 이면 확인하지 않았다는 뜻(`?verify=1` 없이 부른 경우).
+ * 관리자가 받는 `/api/setup` 응답. 파일 기준 상태(SetupState)에 라이브 로그인 확인 결과를
+ * 덧붙인 것이다 — `loggedIn` 이 null 이면 확인하지 않았다는 뜻(`?verify=1` 없이 부른 경우).
  */
 export type SetupResponse = SetupState & {
+  admin: true;
   loggedIn: boolean | null;
   reason: string | null;
   persistence?: { keepLoggedIn: boolean; expiresAt: string | null };
 };
+
+/**
+ * 일반 사용자가 받는 읽기 전용 요약. 글을 쓰는 데 필요한 것만 있다 — 블로그 아이디·쿠키
+ * 만료 시각 같은 계정 정보는 주지 않는다.
+ */
+export interface SetupSummary {
+  admin: false;
+  ready: boolean;
+  categories: string[];
+}
+
+/** 화면이 다루는 두 모양. `admin` 으로 구분한다. */
+export type SetupView = SetupResponse | SetupSummary;
 
 export interface SetupState {
   /** 업로드 화면을 열어도 되는 상태인가 (쿠키가 있고 블로그 아이디를 안다) */

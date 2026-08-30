@@ -1,3 +1,4 @@
+import { forbiddenIfNotOwner, requireUser } from '@/lib/auth/guard';
 import { getJobStore } from '@/lib/job/store-instance';
 import { eventsSince, formatEvent, parseLastEventId } from '@/lib/job/sse';
 import type { JobPhase } from '@/lib/types';
@@ -10,6 +11,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const { id } = await params;
   const store = getJobStore();
 
@@ -20,6 +24,10 @@ export async function GET(
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // 진행 로그에는 글 내용이 섞여 나온다 — 남의 잡은 구독할 수 없다.
+  const forbidden = forbiddenIfNotOwner(guard.ctx, initialJob);
+  if (forbidden) return forbidden;
 
   // D6/D7: Last-Event-ID 헤더를 읽어 그 다음 인덱스부터 이어서 보낸다
   const lastEventId = parseLastEventId(request.headers.get('last-event-id'));

@@ -1,5 +1,6 @@
 // t5 D1/D2: 조립은 lib/pipeline.ts 한 곳에서만 한다 — 여기서는 그 결과를 setServices() 로
 // 주입하고, 프로세스 생명주기(종료 시 정리)를 배선하기만 한다.
+import { checkBootConfig } from './lib/auth/config';
 import { loadConfig } from './lib/config';
 import { setServices } from './lib/job/services';
 import { createServices, disposeServices } from './lib/pipeline';
@@ -70,7 +71,27 @@ function registerShutdownHandlers(): void {
 // Next 가 register() 를 프로세스당 한 번만 부르므로(context7 확인) 사실상 한 번뿐이고,
 // 테스트에서 resetServices() 뒤 재호출해도 항상 다시 주입되어야 하기 때문이다. 핸들러
 // 등록만 별도로 멱등 처리한다(위 registerShutdownHandlers).
+/**
+ * 인증 설정을 부팅 시 한 번 확인한다.
+ *
+ * 조용히 무인증으로 도는 상태를 만들지 않는 것이 핵심이다 — 루프백 밖에 바인딩하면서
+ * 비밀번호가 없으면, 이유를 출력하고 프로세스를 끝낸다. register() 는 서버가 요청을 받기
+ * 전에 끝나므로(Next 문서: "must complete before the server is ready to handle requests"),
+ * 여기서 죽으면 단 한 번의 무인증 요청도 처리되지 않는다.
+ */
+function assertBootConfigOrExit(): void {
+  const result = checkBootConfig();
+  if (!result.ok) {
+    console.error(`\n[instrumentation] 부팅을 거부합니다 — ${result.message}\n`);
+    process.exit(1);
+  }
+  if (result.message !== null) {
+    console.warn(`[instrumentation] ${result.message}`);
+  }
+}
+
 export async function registerNode(): Promise<void> {
+  assertBootConfigOrExit();
   setServices(createServices(loadConfig()));
   registerShutdownHandlers();
   // 이 훅이 실제로 돌았는지가 "잡이 영영 created 에 머문다" 류 증상의 첫 갈림길이다 —

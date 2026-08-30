@@ -5,8 +5,7 @@ import {
   isTerminalPhase,
   phaseLabel,
   safeHref,
-  validateClientUpload,
-} from '@/lib/job/ui-logic';
+  validateClientUpload, setupScreen } from '@/lib/job/ui-logic';
 
 describe('phaseLabel', () => {
   test('정상: 각 phase가 고유한 한글 문구로 매핑된다', () => {
@@ -124,5 +123,36 @@ describe('validateClientUpload', () => {
   test('경계값: 상한 장수를 1장 초과하면 에러 메시지를 반환한다', () => {
     const files = Array.from({ length: 21 }, () => ({ size: 100 }));
     expect(validateClientUpload(files, limits)).not.toBeNull();
+  });
+});
+
+// 관리자와 일반 사용자가 갈리는 지점 — 일반 사용자에게 온보딩(네이버 로그인)이 보이면 안 된다.
+describe('setupScreen — 정상', () => {
+  test('준비가 끝났으면 누구에게나 업로드 화면이다', () => {
+    expect(setupScreen({ verifying: false, setup: { ready: true, admin: true } })).toBe('upload');
+    expect(setupScreen({ verifying: false, setup: { ready: true, admin: false } })).toBe('upload');
+  });
+
+  test('준비가 안 됐으면 관리자에게는 온보딩이 보인다', () => {
+    expect(setupScreen({ verifying: false, setup: { ready: false, admin: true } })).toBe('onboarding');
+  });
+
+  test('준비가 안 됐으면 일반 사용자에게는 안내만 보인다', () => {
+    expect(setupScreen({ verifying: false, setup: { ready: false, admin: false } })).toBe('waiting-for-admin');
+  });
+});
+
+describe('setupScreen — 경계값', () => {
+  test('아직 물어보기 전이면 확인 중이다', () => {
+    expect(setupScreen({ verifying: true, setup: null })).toBe('checking');
+    expect(setupScreen({ verifying: false, setup: null })).toBe('checking');
+  });
+
+  test('관리자라도 라이브 확인이 끝나기 전에는 온보딩을 들이밀지 않는다', () => {
+    expect(setupScreen({ verifying: true, setup: { ready: false, admin: true } })).toBe('checking');
+  });
+
+  test('확인 중이어도 이미 준비됐으면 업로드 화면이다', () => {
+    expect(setupScreen({ verifying: true, setup: { ready: true, admin: false } })).toBe('upload');
   });
 });

@@ -97,6 +97,9 @@ export type JobLogEntry = z.infer<typeof JobLogEntrySchema>;
 
 export const JobStateSchema = z.object({
   id: z.string(),
+  // 이 잡을 만든 세션의 식별자. 남의 잡을 고치거나 발행하지 못하게 하는 근거다.
+  // 인증을 붙이기 전에 만들어진 잡 파일에는 이 필드가 없으므로 default 로 null 을 준다.
+  owner: z.string().nullable().default(null),
   phase: JobPhaseSchema,
   input: PostInputSchema,
   // 사람이 승인 화면에서 고칠 수 있는 초안. 발행할 때 이 내용대로 올라간다.

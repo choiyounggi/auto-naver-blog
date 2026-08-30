@@ -5,6 +5,7 @@ import { LoginTimeoutError, runNaverLoginFlow } from '@/lib/aside/login-flow';
 import { NaverSession } from '@/lib/aside/naver-session';
 import { readSetupState } from '@/lib/aside/blog-meta';
 import { clearVerifyCache, writeVerifyCache } from '@/lib/aside/login-verify-cache';
+import { requireAdmin } from '@/lib/auth/guard';
 import { ENV_FILE_PATH, loadConfig } from '@/lib/config';
 
 export const maxDuration = 360;
@@ -21,7 +22,11 @@ let inFlight: Promise<Response> | null = null;
  *
  * 자격증명은 여기서도 다루지 않는다 — 사람이 직접 입력한다.
  */
-export async function POST(): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
+  // 네이버 계정을 건드리는 경로다 — 관리자만 할 수 있다.
+  const guard = requireAdmin(request);
+  if (!guard.ok) return guard.response;
+
   if (inFlight) {
     return NextResponse.json(
       { error: '이미 로그인 창이 열려 있습니다 — Aside 브라우저에서 로그인을 마쳐 주세요.' },
@@ -54,6 +59,7 @@ export async function POST(): Promise<Response> {
       writeVerifyCache({ loggedIn: true, reason: null }, Date.now());
       return NextResponse.json({
         ...state,
+        admin: true,
         loggedIn: true,
         reason: null,
         skippedCategories: result.skippedCategories,

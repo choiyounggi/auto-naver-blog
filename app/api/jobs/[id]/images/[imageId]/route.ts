@@ -1,14 +1,18 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { NextResponse } from 'next/server';
+import { forbiddenIfNotOwner, requireUser } from '@/lib/auth/guard';
 import { loadConfig } from '@/lib/config';
 import { getJobStore } from '@/lib/job/store-instance';
 import { resolveImagePathWithin } from '@/lib/job/upload';
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; imageId: string }> },
 ): Promise<Response> {
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const { id, imageId } = await params;
   const config = loadConfig();
   const store = getJobStore();
@@ -23,6 +27,9 @@ export async function GET(
   if (!job) {
     return NextResponse.json({ error: `job '${id}' not found` }, { status: 404 });
   }
+
+  const forbidden = forbiddenIfNotOwner(guard.ctx, job);
+  if (forbidden) return forbidden;
 
   const image = job.input.images.find((candidate) => candidate.id === imageId);
   if (!image) {

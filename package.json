@@ -6,14 +6,15 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "next dev -H 127.0.0.1",
+    "dev": "node scripts/serve.mjs dev",
     "build": "next build",
-    "start": "next start -H 127.0.0.1",
+    "start": "node scripts/serve.mjs start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "naver:login": "node scripts/naver-login.mjs",
     "setup": "node scripts/setup.mjs",
-    "e2e:editor": "node scripts/e2e-editor.mjs"
+    "e2e:editor": "node scripts/e2e-editor.mjs",
+    "e2e:auth": "node scripts/e2e-auth.mjs"
   },
   "dependencies": {
     "next": "16.3.2",

@@ -4,6 +4,7 @@ import { NaverSession } from '@/lib/aside/naver-session';
 import { readSetupState } from '@/lib/aside/blog-meta';
 import { readLoginPersistence } from '@/lib/aside/login-persistence';
 import { readVerifyCache, writeVerifyCache } from '@/lib/aside/login-verify-cache';
+import { requireUser } from '@/lib/auth/guard';
 import { ENV_FILE_PATH, loadConfig } from '@/lib/config';
 import type { AppConfig } from '@/lib/config';
 
@@ -41,12 +42,28 @@ async function verifyLogin(config: AppConfig): Promise<{ loggedIn: boolean; reas
  * `?verify=1` 을 주면 저장된 쿠키가 실제로 살아 있는지까지 확인한다(느리다).
  */
 export async function GET(request: Request): Promise<Response> {
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const config = loadConfig();
   const state = await readSetupState({
     envPath: ENV_FILE_PATH,
     cookieFile: config.cookieFile,
     envOverrides: { blogId: config.naverBlogId },
   });
+
+  // 일반 사용자에게는 읽기 전용 요약만 준다 — 블로그 아이디·쿠키 만료 시각 같은 계정 정보는
+  // 글을 쓰는 데 필요하지 않다. 라이브 확인도 하지 않는다(브라우저를 띄우는 일은 관리자만).
+  if (guard.ctx.session.role !== 'admin') {
+    // 관리자가 최근에 확인해 둔 결과가 있으면 그건 반영한다 — 로그아웃된 걸 알면서
+    // "준비됨" 으로 보여 주지 않기 위해서다.
+    const cached = readVerifyCache(Date.now());
+    return NextResponse.json({
+      admin: false,
+      ready: state.ready && (cached?.loggedIn ?? true),
+      categories: state.categories,
+    });
+  }
 
   // 쿠키 파일만 읽으면 되므로 항상 함께 준다 — 로그인이 오래 갈지 화면에서 알려주기 위함이다.
   const persistence = await readLoginPersistence(config.cookieFile);
@@ -55,7 +72,7 @@ export async function GET(request: Request): Promise<Response> {
   const verify = params.get('verify') === '1';
   // 파일 기준으로도 준비가 안 됐으면 브라우저를 띄울 이유가 없다.
   if (!verify || !state.ready) {
-    return NextResponse.json({ ...state, loggedIn: null, reason: null, persistence });
+    return NextResponse.json({ ...state, admin: true, loggedIn: null, reason: null, persistence });
   }
 
   // 화면을 새로고침할 때마다 몇 초씩 기다리지 않도록 짧게 캐시한다.
@@ -79,6 +96,7 @@ export async function GET(request: Request): Promise<Response> {
 
   return NextResponse.json({
     ...state,
+    admin: true,
     ready: state.ready && result.loggedIn,
     loggedIn: result.loggedIn,
     reason: result.reason,

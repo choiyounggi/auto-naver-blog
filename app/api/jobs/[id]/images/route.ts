@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { NextResponse } from 'next/server';
+import { forbiddenIfNotOwner, requireUser } from '@/lib/auth/guard';
 import { loadConfig } from '@/lib/config';
 import { getJobStore } from '@/lib/job/store-instance';
 import {
@@ -25,6 +26,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const guard = requireUser(request);
+  if (!guard.ok) return guard.response;
+
   const { id } = await params;
   const config = loadConfig();
   const store = getJobStore();
@@ -33,6 +37,8 @@ export async function POST(
   if (!job) {
     return NextResponse.json({ error: 'job not found' }, { status: 404 });
   }
+  const forbidden = forbiddenIfNotOwner(guard.ctx, job);
+  if (forbidden) return forbidden;
   if (job.phase !== 'awaiting_approval') {
     return NextResponse.json(
       { error: `지금은 사진을 추가할 수 있는 단계가 아닙니다 (현재: ${job.phase})` },

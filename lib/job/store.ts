@@ -53,10 +53,13 @@ export class JobStore {
     return path.join(this.jobDir(id), 'state.json');
   }
 
-  async create(input: PostInput): Promise<JobState> {
+  // owner 는 잡을 만든 세션의 식별자다. 기본값이 null 인 이유는 인증을 붙이기 전에 만들어진
+  // 잡과 같은 의미("누구 것인지 모른다")를 갖게 하기 위함이다 — 그런 잡은 관리자만 만질 수 있다.
+  async create(input: PostInput, owner: string | null = null): Promise<JobState> {
     const now = new Date().toISOString();
     const state: JobState = {
       id: input.jobId,
+      owner,
       phase: 'created',
       input,
       draft: null,
