@@ -232,6 +232,42 @@ describe('NaverPublisher — D13: 세션 확인', () => {
     await expect(publisher.fillEditor(makeDraft(1), makeInput(1))).rejects.toThrow(/no-cookies/);
     expect(repl.calls.length).toBe(0);
   });
+
+  test('로그아웃(no-cookies/expired)이면 "로그인이 되어 있지 않습니다" 라고 단정한다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const expired: NaverSessionStatus = {
+      loggedIn: false,
+      reason: 'expired',
+      checkedAt: '2026-08-30T10:34:32.833Z',
+    };
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(expired), makeConfig());
+
+    await expect(publisher.fillEditor(makeDraft(1), makeInput(1))).rejects.toThrow(
+      /로그인이 되어 있지 않습니다/,
+    );
+  });
+
+  // 실측(2026-08-30): Aside 데몬이 REPL 세션을 회수해 status() 가 판정 자체를 못 했는데
+  // (reason:'unknown'), 에러 문구는 "네이버 로그인이 되어 있지 않습니다" 였다 — 멀쩡한
+  // 네이버 로그인을 의심하며 시간을 버렸다. 'unknown' 은 로그아웃이 아니라 확인 실패다.
+  test('에러: reason:"unknown" 이면 로그아웃이라 단정하지 않고 "확인하지 못했습니다" 라고 보고한다', async () => {
+    const repl = successRepl(await loadEditorReadyTree());
+    const unknown: NaverSessionStatus = {
+      loggedIn: false,
+      reason: 'unknown',
+      checkedAt: '2026-08-30T10:34:32.833Z',
+    };
+    const publisher = new NaverPublisher(repl, new FakeNaverSession(unknown), makeConfig());
+
+    const error = await publisher.fillEditor(makeDraft(1), makeInput(1)).then(
+      () => null,
+      (err: unknown) => err as Error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error?.message).toMatch(/확인하지 못했습니다/);
+    expect(error?.message).not.toMatch(/로그인이 되어 있지 않습니다/);
+    expect(repl.calls.length).toBe(0);
+  });
 });
 
 describe('NaverPublisher — 중간 단계 실패', () => {

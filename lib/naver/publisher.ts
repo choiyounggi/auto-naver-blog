@@ -58,7 +58,15 @@ export class NaverPublisher implements NaverPublisherApi {
     // 엉뚱한 페이지를 조작하게 된다.
     const status = await this.session.status();
     if (!status.loggedIn) {
-      throw new Error(`[fillEditor] 네이버 로그인이 되어 있지 않습니다 (reason=${status.reason}).`);
+      // reason:'unknown' 은 "로그아웃"이 아니라 "판정을 못 했다"는 뜻이다(lib/aside/naver-session.ts) —
+      // 브라우저 채널이 응답하지 않은 경우가 여기 들어온다. 둘을 같은 문장으로 보고하면
+      // 멀쩡한 네이버 로그인을 의심하며 시간을 버리게 된다(실측 2026-08-30).
+      throw new Error(
+        status.reason === 'unknown'
+          ? '[fillEditor] 네이버 로그인 여부를 확인하지 못했습니다 (reason=unknown) — Aside 브라우저 채널이 ' +
+            '응답하지 않았을 수 있습니다. 로그아웃됐다는 뜻은 아닙니다.'
+          : `[fillEditor] 네이버 로그인이 되어 있지 않습니다 (reason=${status.reason}).`,
+      );
     }
 
     const blogId = status.blogId ?? this.config.naverBlogId;

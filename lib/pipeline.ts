@@ -18,6 +18,19 @@ import type {
 } from './types';
 import { PublishResultSchema } from './types';
 
+// 실측(2026-08-30, ~/.aside/logs/daemon-2026-08-30.log): Aside 데몬은 오래 쉰 CLI REPL
+// 세션을 회수한다. 우리 `aside repl` 자식 프로세스는 그대로 살아 있어 채널은 멀쩡해 보이지만,
+// 다음 evaluate 가 'REPL session not found' 로 7ms 만에 실패한다. 그러면 NaverSession.status()
+// 가 그 실패를 reason:'unknown' 으로 접어 넣고 fillEditor 는 "네이버 로그인이 되어 있지
+// 않습니다" 로 죽는다 — 네이버 로그인은 멀쩡한데도. 게다가 inner 가 그대로 남아, 서버를
+// 재시작하기 전까지 이후 모든 잡이 같은 죽은 채널을 다시 쓴다(21시간 쉬었다 온 잡 하나가
+// 그렇게 실패했다).
+//
+// `aside repl` 에는 세션을 살려 두는 옵션이 없다(aside repl --help 실측). 그래서 재사용 전에
+// 부작용 없는 한 줄로 한 번 찔러 본다 — 살아 있으면 값싸게 끝나고, 죽었으면 그 자리에서
+// 드러나 REPL 을 버리고 새로 만든다.
+const PROBE_JS = `console.log(JSON.stringify({ probe: true }));`;
+
 export type ReplFactory = (config: AppConfig) => AsideReplApi;
 
 export interface CreateServicesOptions {
@@ -39,6 +52,21 @@ class LazyNaverPublisher implements NaverPublisherApi {
   }
 
   async fillEditor(draft: PostDraft, input: PostInput, onProgress?: ProgressFn): Promise<EditorPreview> {
+    const inner = await this.ensureInner();
+    return inner.fillEditor(draft, input, onProgress);
+  }
+
+  /**
+   * 쓸 수 있는 REPL 을 보장한다 — 살아 있으면 재사용하고, 죽었으면 버리고 새로 만든다.
+   *
+   * 이 복구는 fillEditor 에서만 한다. publish()/refreshPreview() 는 이미 채워 둔 에디터
+   * 탭을 전제로 하므로, 그 채널이 죽었다면 조용히 새 REPL 을 붙여선 안 된다 — 빈 에디터를
+   * 발행하게 된다. 거기서는 시끄럽게 실패하는 편이 맞다.
+   */
+  private async ensureInner(): Promise<NaverPublisherApi> {
+    if (this.inner && !(await this.replResponds())) {
+      await this.discardRepl();
+    }
     if (!this.inner) {
       const repl = this.replFactory(this.config);
       // start() 가 throw 하면 this.repl/this.inner 는 여전히 null 로 남아, 다음 호출이
@@ -48,7 +76,27 @@ class LazyNaverPublisher implements NaverPublisherApi {
       this.inner = new NaverPublisher(repl, session, this.config);
       this.repl = repl;
     }
-    return this.inner.fillEditor(draft, input, onProgress);
+    return this.inner;
+  }
+
+  private async replResponds(): Promise<boolean> {
+    const repl = this.repl;
+    if (!repl) return false;
+    try {
+      return (await repl.evaluate(PROBE_JS)).ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 못 쓰게 된 REPL 을 버린다. disposeRepl() 은 await 하기 전에 repl/inner 를 비우므로,
+   * 정리가 실패해도 다음 호출은 새 REPL 을 만든다. */
+  private async discardRepl(): Promise<void> {
+    try {
+      await this.disposeRepl();
+    } catch {
+      // 이미 죽은 채널을 닫다 난 오류는 무시한다 — 어차피 버리는 중이다.
+    }
   }
 
   async refreshPreview(input: PostInput): Promise<EditorPreview> {

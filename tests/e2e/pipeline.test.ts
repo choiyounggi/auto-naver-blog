@@ -61,15 +61,26 @@ function makeDraft(): PostDraft {
   };
 }
 
+/** 재사용 전 프로브(lib/pipeline.ts PROBE_JS)에 이 REPL 이 어떻게 답할지. */
+type ProbeBehavior =
+  /** 세션이 살아 있다 — 재사용된다 */
+  | 'alive'
+  /** 데몬이 세션을 회수했다 — evaluate 가 ok:false 로 돌아온다(실측한 실패 모양) */
+  | 'dead'
+  /** 채널 자체가 던진다(자식 프로세스 사망 등) */
+  | 'throws';
+
 /** 실제 aside 자식 프로세스를 절대 띄우지 않는 가짜 AsideReplApi. */
 class FakeRepl implements AsideReplApi {
   startCalls = 0;
   disposeCalls = 0;
   evaluateCalls = 0;
   private readonly startError: Error | null;
+  private readonly probe: ProbeBehavior;
 
-  constructor(opts: { startError?: Error } = {}) {
+  constructor(opts: { startError?: Error; probe?: ProbeBehavior } = {}) {
     this.startError = opts.startError ?? null;
+    this.probe = opts.probe ?? 'alive';
   }
 
   async start(): Promise<void> {
@@ -81,9 +92,15 @@ class FakeRepl implements AsideReplApi {
 
   async evaluate(_js: string): Promise<AsideEvalResult> {
     this.evaluateCalls += 1;
-    // cookieFile 이 존재하지 않으므로 NaverSession.status() 는 이 메서드를 부르지 않고
-    // 짧게 순환한다 — 호출되면 배선 가정이 깨진 것이므로 시끄럽게 실패시킨다.
-    throw new Error('FakeRepl.evaluate() 가 예상치 못하게 호출됨 — 이 테스트는 cookieFile 부재로 인한 조기 반환을 전제로 한다');
+    // cookieFile 이 존재하지 않으므로 NaverSession.status() 는 evaluate 를 부르지 않는다 —
+    // 여기 도달하는 것은 REPL 재사용 전 프로브뿐이다.
+    if (this.probe === 'throws') {
+      throw new Error('FakeRepl: 채널이 죽었다 (fixture)');
+    }
+    if (this.probe === 'dead') {
+      return { ok: false, stdout: '', durationMs: 7, error: 'REPL session not found (fixture)' };
+    }
+    return { ok: true, stdout: '{"probe":true}', durationMs: 1, error: null };
   }
 
   async dispose(): Promise<void> {
@@ -93,7 +110,7 @@ class FakeRepl implements AsideReplApi {
 
 const createdRepls: FakeRepl[] = [];
 
-function trackingFactory(opts: { startError?: Error } = {}) {
+function trackingFactory(opts: { startError?: Error; probe?: ProbeBehavior } = {}) {
   let calls = 0;
   const factory = (_config: AppConfig): AsideReplApi => {
     calls += 1;
@@ -137,15 +154,95 @@ describe('createServices — 지연 시작 (D8)', () => {
     expect(createdRepls[0]?.startCalls).toBe(1);
   });
 
-  test('두 번째 fillEditor 후에도 replFactory 호출은 여전히 1회 (재사용)', async () => {
-    const { factory, callCount } = trackingFactory();
+  test('두 번째 fillEditor 후에도 replFactory 호출은 여전히 1회 (프로브가 살아 있음을 확인하고 재사용)', async () => {
+    const { factory, callCount } = trackingFactory({ probe: 'alive' });
+    const services = createServices(fixtureConfig(), { replFactory: factory });
+
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+    // 첫 호출에는 재사용할 REPL 이 없으므로 프로브도 없다.
+    expect(createdRepls[0]?.evaluateCalls).toBe(0);
+
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+
+    expect(callCount()).toBe(1);
+    expect(createdRepls[0]?.startCalls).toBe(1);
+    // 두 번째 호출은 재사용 전에 정확히 한 번 찔러 봤다.
+    expect(createdRepls[0]?.evaluateCalls).toBe(1);
+    expect(createdRepls[0]?.disposeCalls).toBe(0);
+  });
+});
+
+// 실측(2026-08-30): Aside 데몬이 21시간 쉰 REPL 세션을 회수했다. 자식 프로세스는 살아 있어
+// 재사용됐지만 다음 evaluate 가 'REPL session not found' 로 실패했고, 그 실패가
+// NaverSession.status() 를 거쳐 "네이버 로그인이 되어 있지 않습니다" 로 보고됐다 — 네이버
+// 로그인은 멀쩡했다. 게다가 죽은 inner 가 그대로 남아 이후 모든 잡이 같은 실패를 반복했다.
+describe('createServices — 죽은 REPL 세션 복구', () => {
+  test('프로브가 ok:false 면 죽은 REPL 을 버리고 새로 만든다 (같은 죽은 채널을 다시 쓰지 않는다)', async () => {
+    // 첫 REPL 은 세션이 회수된 것(dead), 두 번째부터는 정상인 REPL 을 준다.
+    let calls = 0;
+    const repls: FakeRepl[] = [];
+    const factory = (_config: AppConfig): AsideReplApi => {
+      calls += 1;
+      const repl = new FakeRepl(calls === 1 ? { probe: 'dead' } : {});
+      repls.push(repl);
+      return repl;
+    };
+    const services = createServices(fixtureConfig(), { replFactory: factory });
+
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+    expect(calls).toBe(1);
+
+    // 두 번째 호출: 프로브가 실패 → 첫 REPL 을 정리하고 새 REPL 을 만든다.
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+
+    expect(calls).toBe(2);
+    expect(repls[0]?.disposeCalls).toBe(1);
+    expect(repls[1]?.startCalls).toBe(1);
+  });
+
+  test('프로브가 throw 해도(자식 프로세스 사망) 새 REPL 을 만든다', async () => {
+    let calls = 0;
+    const repls: FakeRepl[] = [];
+    const factory = (_config: AppConfig): AsideReplApi => {
+      calls += 1;
+      const repl = new FakeRepl(calls === 1 ? { probe: 'throws' } : {});
+      repls.push(repl);
+      return repl;
+    };
     const services = createServices(fixtureConfig(), { replFactory: factory });
 
     await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
     await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
 
+    expect(calls).toBe(2);
+    expect(repls[0]?.disposeCalls).toBe(1);
+    expect(repls[1]?.startCalls).toBe(1);
+  });
+
+  test('경계값: 죽은 REPL 이 연달아 나와도 매번 새로 만든다 (한 번 죽었다고 영영 막히지 않는다)', async () => {
+    const { factory, callCount } = trackingFactory({ probe: 'dead' });
+    const services = createServices(fixtureConfig(), { replFactory: factory });
+
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
+
+    expect(callCount()).toBe(3);
+    expect(createdRepls[0]?.disposeCalls).toBe(1);
+    expect(createdRepls[1]?.disposeCalls).toBe(1);
+  });
+
+  test('publish() 는 죽은 채널을 만나도 REPL 을 새로 만들지 않는다 (빈 에디터를 발행하지 않기 위해)', async () => {
+    const { factory, callCount } = trackingFactory({ probe: 'dead' });
+    const services = createServices(fixtureConfig(), { replFactory: factory });
+
+    await expect(services.publisher.fillEditor(makeDraft(), makeInput())).rejects.toThrow(/로그인/);
     expect(callCount()).toBe(1);
-    expect(createdRepls[0]?.startCalls).toBe(1);
+
+    // fillEditor 가 실패했으므로 publish() 는 거부된다 — 그 과정에서 REPL 을 더 만들지 않는다.
+    const result = await services.publisher.publish();
+    expect(result.ok).toBe(false);
+    expect(callCount()).toBe(1);
   });
 });
 
