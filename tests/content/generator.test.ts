@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, test } from 'vitest';
 import type { AppConfig } from '@/lib/config';
-import { POST_DRAFT_JSON_SCHEMA, buildPrompt, ContentGenerator } from '@/lib/content/generator';
+import { POST_DRAFT_JSON_SCHEMA, buildPrompt, ContentGenerator, normalizeLineBreaks } from '@/lib/content/generator';
 import type { PostInput, UploadedImage } from '@/lib/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -162,6 +162,56 @@ describe('ContentGenerator.generate — 경계값', () => {
     const input = makeInput({ imageCount: 2, fakeMode: 'generator-tags-empty' });
 
     await expect(generator.generate(input)).rejects.toThrow(/tags/);
+  });
+});
+
+// 실측 회귀(2026-08-30): 모델이 모든 문장 사이에 빈 줄을 넣어 발행 글이 문장마다
+// 두 줄씩 벌어져 보였다. normalizeLineBreaks 가 이를 2문장 덩어리로 재구성한다.
+describe('normalizeLineBreaks', () => {
+  test('정상: 단일 줄바꿈이 섞인(의도된 배치) 텍스트는 그대로 둔다', () => {
+    const text = '첫 문장.\n둘째 문장.\n\n셋째 문장.\n넷째 문장.';
+    expect(normalizeLineBreaks(text)).toBe(text);
+  });
+
+  test('모든 문장이 빈 줄로만 분리된 텍스트: 2문장 덩어리로 재구성한다', () => {
+    expect(normalizeLineBreaks('a.\n\nb.\n\nc.\n\nd.')).toBe('a.\nb.\n\nc.\nd.');
+  });
+
+  test('홀수 개 문장: 마지막 문장은 홀로 남는다', () => {
+    expect(normalizeLineBreaks('a.\n\nb.\n\nc.')).toBe('a.\nb.\n\nc.');
+  });
+
+  test('3연속 이상 줄바꿈은 빈 줄 하나로 접는다', () => {
+    expect(normalizeLineBreaks('첫 덩어리.\n둘째 줄.\n\n\n\n다음 덩어리.')).toBe('첫 덩어리.\n둘째 줄.\n\n다음 덩어리.');
+  });
+
+  test('경계값: 빈 문자열은 빈 문자열이다', () => {
+    expect(normalizeLineBreaks('')).toBe('');
+  });
+
+  test('경계값: 한 줄짜리 텍스트는 그대로다', () => {
+    expect(normalizeLineBreaks('한 문장뿐입니다.')).toBe('한 문장뿐입니다.');
+  });
+
+  test('경계값: 빈 줄 간격이 2덩어리뿐이면 재구성하지 않는다', () => {
+    expect(normalizeLineBreaks('a.\n\nb.')).toBe('a.\n\nb.');
+  });
+
+  test('경계값: 앞뒤 줄바꿈은 잘려 나간다', () => {
+    expect(normalizeLineBreaks('\n\n본문.\n\n')).toBe('본문.');
+  });
+});
+
+describe('ContentGenerator.generate — 개행 정규화 적용', () => {
+  test('문장마다 빈 줄인 응답: intro/caption/outro가 모두 재구성되어 돌아온다', async () => {
+    const generator = new ContentGenerator(fakeConfig());
+    const input = makeInput({ imageCount: 1, fakeMode: 'generator-double-breaks' });
+
+    const draft = await generator.generate(input);
+
+    expect(draft.intro).toBe('안녕하세요.\n오늘은 파스타 이야기예요.\n\n기념일이라 다녀왔습니다.\n짧게 남겨볼게요.');
+    expect(draft.blocks[0].caption).toBe('면이 넉넉하게 담겨 나왔어요.\n허브가 뿌려져 있었습니다.\n\n정갈해 보였어요.');
+    expect(draft.outro).toBe('마무리 인사입니다.\n\n또 올게요.');
   });
 });
 

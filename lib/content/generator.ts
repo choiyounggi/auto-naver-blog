@@ -68,10 +68,32 @@ export class ContentGenerator implements ContentGeneratorApi {
 
     return {
       ...draft,
+      intro: normalizeLineBreaks(draft.intro),
+      outro: normalizeLineBreaks(draft.outro),
+      blocks: draft.blocks.map((block) => ({ ...block, caption: normalizeLineBreaks(block.caption) })),
       model: result.model,
       generatedAt: new Date().toISOString(),
     };
   }
+}
+
+// 실측(2026-08-30): 프롬프트가 "덩어리 사이에만 빈 줄" 이라고 해도 모델이 **모든** 문장
+// 사이에 빈 줄을 넣은 초안이 반복해서 나왔고, 발행 화면에서 문장마다 두 줄씩 벌어져
+// 보였다. 프롬프트 지시는 유지하되, 어긋난 응답은 여기서 결정적으로 바로잡는다:
+// 빈 줄로만 분리된(단일 줄바꿈이 하나도 없는) 텍스트는 인기글의 리듬대로 2문장
+// 덩어리로 재구성한다. 단일 줄바꿈이 하나라도 있으면 모델이 의도한 배치로 보고
+// 그대로 둔다(3연속 이상 줄바꿈만 빈 줄 하나로 접는다).
+export function normalizeLineBreaks(text: string): string {
+  const collapsed = text.replace(/\n{3,}/g, '\n\n').trim();
+  const chunks = collapsed.split('\n\n');
+  if (chunks.length < 3 || chunks.some((chunk) => chunk.includes('\n'))) {
+    return collapsed;
+  }
+  const regrouped: string[] = [];
+  for (let i = 0; i < chunks.length; i += 2) {
+    regrouped.push(chunks.slice(i, i + 2).join('\n'));
+  }
+  return regrouped.join('\n\n');
 }
 
 // D12: invariants a zod schema cannot express because they compare the

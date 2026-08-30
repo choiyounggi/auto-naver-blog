@@ -1,0 +1,30 @@
+{
+  "is_error": false,
+  "subtype": "success",
+  "terminal_reason": "completed",
+  "total_cost_usd": 0.34,
+  "permission_denials": [],
+  "modelUsage": {
+    "claude-sonnet-5": {
+      "inputTokens": 8000,
+      "outputTokens": 300
+    }
+  },
+  "structured_output": {
+    "title": "문장마다 빈 줄이 들어간 초안",
+    "intro": "안녕하세요.\n\n오늘은 파스타 이야기예요.\n\n기념일이라 다녀왔습니다.\n\n짧게 남겨볼게요.",
+    "blocks": [
+      {
+        "imageId": "img-1",
+        "caption": "면이 넉넉하게 담겨 나왔어요.\n\n허브가 뿌려져 있었습니다.\n\n정갈해 보였어요.",
+        "altText": "이미지 1 대체 텍스트"
+      }
+    ],
+    "outro": "마무리 인사입니다.\n\n또 올게요.",
+    "tags": ["테스트"],
+    "topic": "일상",
+    "thumbnailImageId": "img-1",
+    "generatedAt": "2026-08-25T00:00:00.000Z",
+    "model": "claude-sonnet-5"
+  }
+}
