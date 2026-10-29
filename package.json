@@ -17,10 +17,13 @@
     "e2e:auth": "node scripts/e2e-auth.mjs"
   },
   "dependencies": {
-    "next": "16.3.2",
+    "next": "16.4.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
