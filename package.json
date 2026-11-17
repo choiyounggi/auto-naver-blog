@@ -17,7 +17,7 @@
     "e2e:auth": "node scripts/e2e-auth.mjs"
   },
   "dependencies": {
-    "next": "16.4.3",
+    "next": "16.4.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.4.3"
